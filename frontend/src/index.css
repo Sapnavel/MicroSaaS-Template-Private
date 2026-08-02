@@ -1,0 +1,511 @@
+:root {
+  color-scheme: light;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+  background-color: #f5f6f8;
+  color: #1a1a1a;
+}
+
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  box-sizing: border-box;
+}
+
+.auth-form {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 2rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.auth-form h1 {
+  margin: 0 0 1rem 0;
+  font-size: 1.35rem;
+}
+
+.auth-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-top: 0.5rem;
+}
+
+.auth-input {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #c9ccd1;
+  border-radius: 4px;
+  font-size: 1rem;
+}
+
+.auth-submit {
+  margin-top: 1.25rem;
+  padding: 0.6rem 1rem;
+  border: none;
+  border-radius: 4px;
+  background-color: #2f6fed;
+  color: #ffffff;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-submit:disabled {
+  background-color: #9db6e8;
+  cursor: not-allowed;
+}
+
+.auth-error {
+  background-color: #fdecea;
+  color: #b3261e;
+  border: 1px solid #f5c2c0;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+}
+
+.auth-footnote {
+  margin-top: 1rem;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.auth-loading {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Patient Master Index pages (search / register / duplicate review). These
+   reuse .auth-label / .auth-input / .auth-submit / .auth-error for form
+   controls -- see index.css history above -- and only add layout classes
+   that didn't already exist (lists, cards, side-by-side comparisons). */
+
+.page-container {
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 2rem 1.5rem;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.page-container h1 {
+  margin: 0 0 1.5rem 0;
+  font-size: 1.5rem;
+}
+
+.patient-form {
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 2rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  margin-bottom: 2rem;
+}
+
+.search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.patient-card {
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+}
+
+.patient-card h3 {
+  margin: 0 0 0.35rem 0;
+  font-size: 1.05rem;
+}
+
+.patient-card dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.75rem;
+  margin: 0.5rem 0 0 0;
+  font-size: 0.9rem;
+}
+
+.patient-card dt {
+  font-weight: 600;
+  color: #555;
+}
+
+.patient-card dd {
+  margin: 0;
+}
+
+.empty-state {
+  color: #666;
+  font-size: 0.95rem;
+}
+
+.conflict-banner {
+  background-color: #fff8e1;
+  border: 1px solid #f0d98c;
+  border-radius: 6px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.conflict-banner p {
+  margin: 0 0 0.75rem 0;
+}
+
+.conflict-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.button-secondary {
+  padding: 0.5rem 0.9rem;
+  border: 1px solid #2f6fed;
+  border-radius: 4px;
+  background-color: #ffffff;
+  color: #2f6fed;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button-danger {
+  padding: 0.5rem 0.9rem;
+  border: 1px solid #b3261e;
+  border-radius: 4px;
+  background-color: #ffffff;
+  color: #b3261e;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.duplicate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.duplicate-card {
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1.25rem;
+}
+
+.duplicate-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.duplicate-meta {
+  font-size: 0.85rem;
+  color: #555;
+  margin: 0 0 0.75rem 0;
+}
+
+.duplicate-meta ul {
+  margin: 0.25rem 0 0 0;
+  padding-left: 1.25rem;
+}
+
+.duplicate-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+/* Clinical Consultation & Smart Prescription pages -- reuse .page-container /
+   .patient-form / .auth-label / .auth-input / .auth-submit / .button-secondary /
+   .button-danger / .auth-error / .empty-state from above and only add the
+   layout/status classes that didn't already exist (section headers, safety
+   findings, prescription item rows). */
+
+.section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 2rem 0 1rem 0;
+}
+
+.section-header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.field-hint {
+  font-size: 0.8rem;
+  color: #666;
+  margin: 0.15rem 0 0 0;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background-color: #eef1f6;
+  color: #444;
+  margin-left: 0.5rem;
+}
+
+.badge-primary {
+  background-color: #e3ecfd;
+  color: #2f6fed;
+}
+
+.list-plain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.list-item-card {
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+}
+
+.status-banner {
+  border-radius: 6px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.status-banner p {
+  margin: 0 0 0.5rem 0;
+}
+
+.status-banner p:last-child {
+  margin-bottom: 0;
+}
+
+/* Hard block (BLOCK tier): no override exists, only remediation is removing
+   the offending drug(s) and resubmitting. Deliberately styled more alarming
+   (solid red) than the soft override-required banner below, and never
+   paired with an action button. */
+.status-banner--block {
+  background-color: #fdecea;
+  border: 1px solid #f5c2c0;
+}
+
+.status-banner--block h3 {
+  margin: 0 0 0.5rem 0;
+  color: #b3261e;
+}
+
+/* Soft block (OVERRIDE_REQUIRED tier): same visual language as
+   .conflict-banner in the patient-registration duplicate flow, since this is
+   the same "explicit second action required" pattern. */
+.status-banner--override {
+  background-color: #fff8e1;
+  border: 1px solid #f0d98c;
+}
+
+.status-banner--override h3 {
+  margin: 0 0 0.5rem 0;
+  color: #8a6d00;
+}
+
+.status-banner--success {
+  background-color: #eaf6ec;
+  border: 1px solid #bfe3c4;
+}
+
+.status-banner--success h3 {
+  margin: 0 0 0.5rem 0;
+  color: #1e7a34;
+}
+
+.safety-finding-list {
+  list-style: none;
+  margin: 0.5rem 0 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.safety-finding {
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+  border-left: 4px solid #999;
+  background-color: #f5f6f8;
+}
+
+.safety-finding--block {
+  border-left-color: #b3261e;
+}
+
+.safety-finding--override_required {
+  border-left-color: #d99a00;
+}
+
+.safety-finding--info {
+  border-left-color: #2f6fed;
+}
+
+.prescription-item-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr auto;
+  gap: 0.5rem;
+  align-items: end;
+  margin-bottom: 0.75rem;
+}
+
+.prescription-item-row .auth-label {
+  margin-top: 0;
+}
+
+.override-reason-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.textarea {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #c9ccd1;
+  border-radius: 4px;
+  font-size: 1rem;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  font-weight: normal;
+}
+
+/* Pharmacy Inventory pages -- reuse .page-container / .patient-form /
+   .auth-label / .auth-input / .auth-submit / .button-secondary /
+   .auth-error / .status-banner* / .badge* / .list-plain / .list-item-card /
+   .empty-state / .field-hint / .section-header from above. The only new
+   class is `.data-table`, for the dispense allocation breakdown -- no other
+   page in this codebase renders tabular data. */
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0 1rem 0;
+  font-size: 0.9rem;
+}
+
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.data-table th {
+  color: #555;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* Ward/Bed/OT pages -- reuse .page-container / .patient-form / .auth-label /
+   .auth-input / .auth-submit / .button-secondary / .button-danger /
+   .auth-error / .field-hint / .section-header / .empty-state / .list-plain /
+   .list-item-card / .badge / .override-reason-form from above. New classes:
+   `.badge-success` / `.badge-warning` / `.badge-danger` (the bed-status
+   colors, reusing the exact palette `.status-banner--success` /
+   `.status-banner--override` / `.status-banner--block` already established,
+   so "available/cleaning/blocked" reads with the same visual language as
+   the safety-tier banners rather than inventing new colors) and
+   `.ward-section` / `.bed-grid` / `.bed-card` for the bed matrix layout. */
+
+.badge-success {
+  background-color: #eaf6ec;
+  color: #1e7a34;
+}
+
+.badge-warning {
+  background-color: #fff8e1;
+  color: #8a6d00;
+}
+
+.badge-danger {
+  background-color: #fdecea;
+  color: #b3261e;
+}
+
+.ward-section {
+  margin-bottom: 2rem;
+}
+
+.ward-section h2 {
+  font-size: 1.1rem;
+  margin: 0 0 0.75rem 0;
+}
+
+.bed-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.75rem;
+}
+
+.bed-card {
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+}
+
+.bed-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.bed-card-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.bed-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
