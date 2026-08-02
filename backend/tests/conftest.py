@@ -30,6 +30,7 @@ Test isolation choices (documented per the task brief):
 import os
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 os.environ.setdefault(
     "JWT_SIGNING_KEYS",
@@ -76,6 +77,36 @@ TEST_REDIS_URL = os.environ["REDIS_URL"]
 
 engine = create_engine(TEST_DATABASE_URL, pool_pre_ping=True)
 TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# database/seed_clinical_reference_data.sql is deliberately NOT applied by
+# docker-entrypoint-initdb.d (only schema.sql is -- see that seed file's own
+# header) and `drugs`/`drug_interactions` are deliberately NOT in
+# TRUNCATE_TABLES below (they're seeded reference data, not per-test state).
+# But nothing else ever loads that file into the test database either -- on
+# a freshly created Postgres volume both tables are simply empty, which is
+# exactly why test_prescription_safety.py/test_consultations.py's drug-name
+# lookups (`_drug_id(db, "Coumadin")`, etc.) raised `NoResultFound` before
+# this fixture existed. Applying it once per test session closes that gap.
+#
+# The presence check below deliberately looks up a SPECIFIC seeded drug name
+# ("Coumadin"), NOT `SELECT COUNT(*) FROM drugs` -- the Pharmacy module's own
+# `drug`/`other_drug` fixtures (see below) insert their own rows into this
+# same, never-truncated table with random `Test Drug <hex>` names, so a
+# plain count is already nonzero on any dev database that has ever run a
+# pharmacy test. Checking for one real seeded name is the only reliable way
+# to tell "has the reference data actually been loaded" from "some other
+# module's fixtures have left unrelated rows behind".
+_SEED_FILE = Path(__file__).resolve().parent.parent.parent / "database" / "seed_clinical_reference_data.sql"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _seed_clinical_reference_data():
+    with engine.begin() as conn:
+        already_seeded = conn.execute(
+            text("SELECT EXISTS (SELECT 1 FROM drugs WHERE name = 'Coumadin')")
+        ).scalar_one()
+        if not already_seeded:
+            conn.execute(text(_SEED_FILE.read_text(encoding="utf-8")))
 
 # Extended by PRPs/patient-master-index-prp.md's TEST-AGENT (Phase 3) to
 # cover the Patient Master Index module's tables. `patients` CASCADEs into
