@@ -451,3 +451,42 @@ def _front_desk_reads_own_branch_billing(user: User, resource: Any) -> bool:
 @policy("front_desk", "notification", "read")
 def _front_desk_reads_own_branch_notifications(user: User, resource: Any) -> bool:
     return True
+
+
+# PRPs/realtime-queue-prp.md Phase 2: `queue_token` is the resource_type used
+# for `QueueToken` rows (a real `branch_id` column of its own -- see
+# services/queue_service.py's module docstring) and for `list_queue`'s
+# branch-wide read (a `_BranchScoped` stand-in carrying just `branch_id`,
+# same pattern as Pharmacy's `_BranchScoped`). As with every prior
+# branch-scoped module's own policies above, the tenant guard inside
+# `authorize()` is what actually enforces branch isolation here (a
+# front_desk/nurse/doctor at Branch A must never see/touch Branch B's queue)
+# -- these policies exist only so a role that passes the tenant guard isn't
+# then denied by authorize()'s "no policy registered" default-deny. `doctor`
+# gets a read policy only, per the PRP's RBAC design decision #6: a doctor
+# may glance at their own live queue but doesn't operate the front desk
+# (check in patients, call/delay/skip tokens). `system_admin` needs no
+# separate entry: `_admin_bypass` above already covers it.
+@policy("front_desk", "queue_token", "read")
+def _front_desk_reads_own_branch_queue(user: User, resource: Any) -> bool:
+    return True
+
+
+@policy("front_desk", "queue_token", "write")
+def _front_desk_writes_own_branch_queue(user: User, resource: Any) -> bool:
+    return True
+
+
+@policy("nurse", "queue_token", "read")
+def _nurse_reads_own_branch_queue(user: User, resource: Any) -> bool:
+    return True
+
+
+@policy("nurse", "queue_token", "write")
+def _nurse_writes_own_branch_queue(user: User, resource: Any) -> bool:
+    return True
+
+
+@policy("doctor", "queue_token", "read")
+def _doctor_reads_own_branch_queue(user: User, resource: Any) -> bool:
+    return True

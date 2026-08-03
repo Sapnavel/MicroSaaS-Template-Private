@@ -48,8 +48,6 @@ app.include_router(wards.router)
 app.include_router(billing.router)
 app.include_router(notifications.router)
 app.include_router(dashboard.router)
-
-# Stubs — scaffolded, endpoints TODO per docstring in each module
 app.include_router(queue.router)
 
 

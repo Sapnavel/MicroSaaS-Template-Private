@@ -19,6 +19,7 @@ import PatientSearchPage from "./pages/PatientSearchPage";
 import PharmacyDispensePage from "./pages/PharmacyDispensePage";
 import PharmacyInventoryPage from "./pages/PharmacyInventoryPage";
 import PrescriptionPage from "./pages/PrescriptionPage";
+import QueueBoardPage from "./pages/QueueBoardPage";
 import RegisterPage from "./pages/RegisterPage";
 
 // Module pages are scaffolded per docs/ARCHITECTURE.md build-out order.
@@ -139,6 +140,20 @@ export default function App(): JSX.Element {
             element={
               <ProtectedRoute allowedRoles={["pharmacist", "system_admin"]}>
                 <PharmacyDispensePage />
+              </ProtectedRoute>
+            }
+          />
+          {/* Real-Time Queue & Digital Token module -- see
+              PRPs/realtime-queue-prp.md "ENDPOINTS" / design decision #6.
+              front_desk/nurse/system_admin get check-in + status-transition
+              controls; doctor is read-only (QueueBoardPage.tsx gates every
+              action button and the check-in form by role, same discipline
+              as BedMatrixPage.tsx/InvoicePage.tsx). */}
+          <Route
+            path="/queue/board"
+            element={
+              <ProtectedRoute allowedRoles={["front_desk", "nurse", "doctor", "system_admin"]}>
+                <QueueBoardPage />
               </ProtectedRoute>
             }
           />

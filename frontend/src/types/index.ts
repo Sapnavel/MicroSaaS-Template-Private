@@ -500,3 +500,28 @@ export interface StockAlerts {
   lowStock: LowStockItem[];
   expiringSoon: ExpiringBatch[];
 }
+
+/**
+ * Real-Time Queue & Digital Token module -- see
+ * PRPs/realtime-queue-prp.md "MODULE OVERVIEW" / "ENDPOINTS". Fills in the
+ * exact gap the Executive Dashboard's `DepartmentWaitTime` comment above
+ * already flagged (`routers/queue.py` was previously a stub).
+ *
+ * Per design decision #1, a `QueueToken` has no `patientId` of its own --
+ * `appointmentId` is the only (nullable) link back to a patient, and a
+ * walk-in check-in (no appointment) leaves it `null`.
+ */
+export type TokenStatus = "waiting" | "in_consultation" | "delayed" | "skipped" | "done";
+
+export interface QueueToken {
+  id: string;
+  branchId: string;
+  appointmentId: string | null;
+  departmentId: number | null;
+  tokenNumber: number;
+  status: TokenStatus;
+  checkedInAt: string;
+  calledAt: string | null;
+  completedAt: string | null;
+  estimatedWaitMinutes: number | null;
+}

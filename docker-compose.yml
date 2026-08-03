@@ -83,6 +83,23 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  queue_wait_time_worker:
+    build: ./backend
+    command: ["python", "-m", "app.workers.queue_wait_time_consumer"]
+    environment:
+      DATABASE_URL: postgresql+psycopg2://hms:hms@postgres:5432/hms
+      REDIS_URL: redis://redis:6379/0
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      JWT_SIGNING_KEYS: ${JWT_SIGNING_KEYS:?set a JSON JWT signing keyring, see .env.example}
+      JWT_CURRENT_KID: ${JWT_CURRENT_KID:-k1}
+      HMAC_KEY: ${HMAC_KEY:?set a separate HMAC key, see .env.example}
+      PHI_ENCRYPTION_KEY: ${PHI_ENCRYPTION_KEY:?set a 32-byte urlsafe base64 Fernet key}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
   frontend:
     build: ./frontend
     environment:
