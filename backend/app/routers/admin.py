@@ -20,8 +20,14 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 def provision_staff(
     payload: StaffProvisionRequest,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_role("system_admin")),
+    current_user: User = Depends(require_role("system_admin")),
 ) -> StaffProfile:
+    """Whole-system review finding H1: staff provisioning -- granting a
+    human standing access to PHI -- had no audit trail at all, unlike every
+    comparable "who gets access to what" action elsewhere in this codebase.
+    `current_user` (previously unused, `_current_user`) is now threaded
+    through to `auth_service.provision_staff` so the acting admin is
+    recorded."""
     user = auth_service.provision_staff(
         db,
         email=payload.email,
@@ -29,5 +35,6 @@ def provision_staff(
         full_name=payload.full_name,
         role=payload.role,
         branch_id=payload.branch_id,
+        provisioned_by=current_user.id,
     )
     return StaffProfile.model_validate(user)

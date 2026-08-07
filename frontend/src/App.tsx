@@ -1,7 +1,9 @@
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Link, Route, Routes } from "react-router-dom";
 
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import { AuthProvider } from "./context/AuthContext";
+import { useAuth } from "./hooks/useAuth";
+import type { Role } from "./types";
 import BedMatrixPage from "./pages/BedMatrixPage";
 import ClaimsPage from "./pages/ClaimsPage";
 import ConsultationPage from "./pages/ConsultationPage";
@@ -22,13 +24,170 @@ import PrescriptionPage from "./pages/PrescriptionPage";
 import QueueBoardPage from "./pages/QueueBoardPage";
 import RegisterPage from "./pages/RegisterPage";
 
-// Module pages are scaffolded per docs/ARCHITECTURE.md build-out order.
-// Only a placeholder home route exists until further modules are implemented.
+/**
+ * Module directory for the home route, filtered to the routes each role can
+ * actually reach per `<Route>`'s own `allowedRoles` below -- kept as a plain
+ * array here so this list and each route's gate can be eyeballed side by
+ * side rather than duplicating role logic. Only top-level, param-free pages
+ * are listed (e.g. not `/consultations/:id`, which is only ever reached from
+ * an existing appointment/consultation elsewhere, never as a standalone
+ * destination).
+ */
+interface ModuleLink {
+  path: string;
+  label: string;
+  description: string;
+  icon: string;
+  category: string;
+  roles: Role[];
+}
+
+const MODULE_LINKS: ModuleLink[] = [
+  {
+    path: "/patients/search",
+    label: "Patient search",
+    description: "Look up an existing patient by name, DOB, or phone.",
+    icon: "🔍",
+    category: "Patients",
+    roles: ["front_desk", "nurse", "doctor", "system_admin"],
+  },
+  {
+    path: "/patients/register",
+    label: "Patient registration",
+    description: "Register a new patient and issue an MRN.",
+    icon: "📝",
+    category: "Patients",
+    roles: ["front_desk", "nurse", "doctor", "system_admin"],
+  },
+  {
+    path: "/patients/duplicates",
+    label: "Duplicate review",
+    description: "Resolve possible duplicate patient records.",
+    icon: "🧬",
+    category: "Patients",
+    roles: ["front_desk", "system_admin"],
+  },
+  {
+    path: "/queue/board",
+    label: "Queue board",
+    description: "Live check-in queue and digital token board.",
+    icon: "🎫",
+    category: "Clinical",
+    roles: ["front_desk", "nurse", "doctor", "system_admin"],
+  },
+  {
+    path: "/lab/orders/new",
+    label: "New lab order",
+    description: "Order lab tests for a patient.",
+    icon: "🧪",
+    category: "Clinical",
+    roles: ["doctor", "system_admin"],
+  },
+  {
+    path: "/lab/worklist",
+    label: "Lab worklist",
+    description: "Process pending lab samples and results.",
+    icon: "🔬",
+    category: "Clinical",
+    roles: ["nurse", "lab_tech", "system_admin"],
+  },
+  {
+    path: "/pharmacy/inventory",
+    label: "Pharmacy inventory",
+    description: "Stock levels, reorder thresholds, batch receiving.",
+    icon: "💊",
+    category: "Pharmacy",
+    roles: ["pharmacist", "system_admin"],
+  },
+  {
+    path: "/pharmacy/dispense",
+    label: "Pharmacy dispense",
+    description: "Dispense a prescription against current stock.",
+    icon: "💉",
+    category: "Pharmacy",
+    roles: ["pharmacist", "system_admin"],
+  },
+  {
+    path: "/wards/beds",
+    label: "Bed matrix",
+    description: "Ward-by-ward bed availability and status.",
+    icon: "🛏️",
+    category: "Wards",
+    roles: ["front_desk", "nurse", "doctor", "system_admin"],
+  },
+  {
+    path: "/wards/ot-schedule",
+    label: "OT schedule",
+    description: "Operating theatre bookings and scheduling.",
+    icon: "🗓️",
+    category: "Wards",
+    roles: ["doctor", "nurse", "system_admin"],
+  },
+  {
+    path: "/billing/invoices",
+    label: "Invoices",
+    description: "View and create invoices for a patient.",
+    icon: "🧾",
+    category: "Billing",
+    roles: ["front_desk", "billing_admin", "system_admin"],
+  },
+  {
+    path: "/billing/claims",
+    label: "Insurance claims",
+    description: "Track and adjudicate insurance claims.",
+    icon: "📄",
+    category: "Billing",
+    roles: ["billing_admin", "system_admin"],
+  },
+  {
+    path: "/notifications/history",
+    label: "Notification history",
+    description: "Delivery status of outbound alerts and reminders.",
+    icon: "🔔",
+    category: "Admin",
+    roles: ["front_desk", "system_admin"],
+  },
+  {
+    path: "/dashboard/executive",
+    label: "Executive dashboard",
+    description: "Occupancy, wait times, revenue, and stock alerts.",
+    icon: "📊",
+    category: "Admin",
+    roles: ["system_admin"],
+  },
+];
+
+const MODULE_CATEGORY_ORDER = ["Patients", "Clinical", "Pharmacy", "Wards", "Billing", "Admin"];
+
 function HomePage(): JSX.Element {
+  const { user } = useAuth();
+  const links = MODULE_LINKS.filter((link) => user !== null && link.roles.includes(user.role));
+  const categories = MODULE_CATEGORY_ORDER.filter((category) =>
+    links.some((link) => link.category === category),
+  );
+
   return (
-    <main>
-      <h1>Hospital Management System</h1>
-      <p>Frontend scaffold — pages are added module by module.</p>
+    <main className="page-container">
+      <h1>Modules</h1>
+      {links.length === 0 && <p className="empty-state">No modules are available for your role.</p>}
+      {categories.map((category) => (
+        <section key={category} className="module-section">
+          <h2 className="module-section-title">{category}</h2>
+          <div className="module-grid">
+            {links
+              .filter((link) => link.category === category)
+              .map((link) => (
+                <Link key={link.path} to={link.path} className="module-card">
+                  <span className="module-card-icon" aria-hidden="true">
+                    {link.icon}
+                  </span>
+                  <span className="module-card-label">{link.label}</span>
+                  <span className="module-card-description">{link.description}</span>
+                </Link>
+              ))}
+          </div>
+        </section>
+      ))}
     </main>
   );
 }

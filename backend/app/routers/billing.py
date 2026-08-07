@@ -30,6 +30,7 @@ from app.database import get_db
 from app.models.user import User
 from app.schemas.billing import (
     ChargeableEventResponse,
+    ClaimListItemResponse,
     ClaimStateUpdate,
     InsuranceClaimResponse,
     InvoiceCreate,
@@ -55,6 +56,21 @@ router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 
 _WRITE_ROLES = ("billing_admin", "system_admin")
 _READ_ROLES = ("billing_admin", "front_desk", "system_admin")
+# Matches ClaimsPage.tsx's route gate (frontend/src/App.tsx's /billing/claims
+# route) -- tighter than _READ_ROLES above (no front_desk).
+_CLAIMS_READ_ROLES = ("billing_admin", "system_admin")
+
+
+@router.get("/claims")
+def list_claims(
+    branch_id: uuid.UUID,
+    state: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(*_CLAIMS_READ_ROLES)),
+) -> list[ClaimListItemResponse]:
+    """GET /api/v1/billing/claims?branch_id=&state= (frontend
+    UUID-to-dropdown conversion follow-up, backend phase)."""
+    return billing_service.list_claims(db, current_user, branch_id, state)
 
 
 @router.post("/invoices", status_code=status.HTTP_201_CREATED)

@@ -741,3 +741,110 @@ def test_write_endpoints_403_cross_branch_billing_admin(
     resp = getattr(client, method)(url, json=body, headers=_auth(ba_token))
 
     assert resp.status_code == 403, resp.text
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/billing/claims (frontend UUID-to-dropdown conversion follow-up)
+# ---------------------------------------------------------------------------
+
+
+def _split_invoice(client, token, invoice_id, claim_amount="100.00", patient_copay="0.00") -> dict:
+    resp = client.post(
+        f"/api/v1/billing/invoices/{invoice_id}/split",
+        json={"payer_name": "Acme", "claim_amount": claim_amount, "patient_copay": patient_copay},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_list_claims_200_happy_path(client, billing_admin_user, staff_password, patient, ended_consultation):
+    token = _login(client, billing_admin_user.email, staff_password)
+    invoice = _create_invoice(client, token, patient.id, billing_admin_user.branch_id)
+    client.post(
+        f"/api/v1/billing/invoices/{invoice['id']}/items",
+        json={
+            "source_type": "consultation",
+            "source_id": str(ended_consultation.id),
+            "description": "Consultation fee",
+            "amount": "100.00",
+        },
+        headers=_auth(token),
+    )
+    _split_invoice(client, token, invoice["id"])
+    claim_id = client.get(f"/api/v1/billing/invoices/{invoice['id']}", headers=_auth(token)).json()["claim"]["id"]
+
+    resp = client.get(
+        "/api/v1/billing/claims", params={"branch_id": str(billing_admin_user.branch_id)}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    row = next(r for r in body if r["id"] == claim_id)
+    assert row["invoice_id"] == invoice["id"]
+    assert row["patient_name"] == patient.full_name
+    assert row["state"] == "submitted"
+    assert float(row["amount"]) == 100.00
+
+
+def test_list_claims_filters_by_state(client, billing_admin_user, staff_password, patient, ended_consultation):
+    token = _login(client, billing_admin_user.email, staff_password)
+    invoice = _create_invoice(client, token, patient.id, billing_admin_user.branch_id)
+    client.post(
+        f"/api/v1/billing/invoices/{invoice['id']}/items",
+        json={
+            "source_type": "consultation",
+            "source_id": str(ended_consultation.id),
+            "description": "Consultation fee",
+            "amount": "100.00",
+        },
+        headers=_auth(token),
+    )
+    _split_invoice(client, token, invoice["id"])
+
+    matching_resp = client.get(
+        "/api/v1/billing/claims",
+        params={"branch_id": str(billing_admin_user.branch_id), "state": "submitted"},
+        headers=_auth(token),
+    )
+    assert matching_resp.status_code == 200, matching_resp.text
+    assert len(matching_resp.json()) == 1
+
+    non_matching_resp = client.get(
+        "/api/v1/billing/claims",
+        params={"branch_id": str(billing_admin_user.branch_id), "state": "paid"},
+        headers=_auth(token),
+    )
+    assert non_matching_resp.status_code == 200, non_matching_resp.text
+    assert non_matching_resp.json() == []
+
+
+def test_list_claims_422_missing_branch_id(client, billing_admin_user, staff_password):
+    token = _login(client, billing_admin_user.email, staff_password)
+
+    resp = client.get("/api/v1/billing/claims", headers=_auth(token))
+
+    assert resp.status_code == 422, resp.text
+
+
+def test_list_claims_403_front_desk(client, front_desk_user, staff_password, branch):
+    """`GET /billing/claims` is `billing_admin`/`system_admin` ONLY --
+    tighter than `_READ_ROLES` (which includes front_desk for plain invoice
+    reads), matching ClaimsPage.tsx's route gate."""
+    token = _login(client, front_desk_user.email, staff_password)
+
+    resp = client.get("/api/v1/billing/claims", params={"branch_id": str(branch.id)}, headers=_auth(token))
+
+    assert resp.status_code == 403, resp.text
+
+
+def test_list_claims_422_mismatched_branch(client, billing_admin_user, staff_password, other_branch):
+    """`list_claims` resolves `branch_id` through `_resolve_branch_filter`
+    (same helper `list_patient_invoices`/`get_chargeable_events` use above),
+    which rejects a non-admin's mismatched branch_id with 422, not 403 --
+    mirrors `test_list_patient_invoices_422_mismatched_branch` exactly."""
+    token = _login(client, billing_admin_user.email, staff_password)
+
+    resp = client.get("/api/v1/billing/claims", params={"branch_id": str(other_branch.id)}, headers=_auth(token))
+
+    assert resp.status_code == 422, resp.text

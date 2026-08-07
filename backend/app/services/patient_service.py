@@ -230,6 +230,14 @@ def create_patient(db: Session, current_user: User, payload: PatientCreate) -> P
             patient.id,
             existing.id,
         )
+        # Whole-system review finding M2: metadata used to also include
+        # `existing.mrn` -- a HIPAA Safe Harbor identifier -- duplicated
+        # into the unencrypted `audit_logs.metadata` JSONB column. The MRN
+        # is still returned in the 409 API response body by design (front
+        # desk needs it to offer "use existing patient"), but that's a
+        # different, already-reviewed tradeoff from writing it into the
+        # audit trail too; `existing_patient_id` alone is enough for anyone
+        # with legitimate audit access to look up the MRN via `patients.id`.
         record_audit_event(
             db,
             branch_id=None,  # patients are not branch-scoped, see module docstring
@@ -237,10 +245,7 @@ def create_patient(db: Session, current_user: User, payload: PatientCreate) -> P
             action="patient.force_create_despite_match",
             resource_type="patient",
             resource_id=str(patient.id),
-            metadata={
-                "existing_patient_id": str(existing.id),
-                "existing_patient_mrn": existing.mrn,
-            },
+            metadata={"existing_patient_id": str(existing.id)},
         )
 
     db.commit()

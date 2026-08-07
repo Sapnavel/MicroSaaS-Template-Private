@@ -181,6 +181,95 @@ def test_get_consultation_404_unknown_id(client, staff_user, staff_password):
 
 
 # ---------------------------------------------------------------------------
+# GET /api/v1/consultations?patient_id= (frontend UUID-to-dropdown
+# conversion follow-up, backend phase)
+# ---------------------------------------------------------------------------
+
+
+def _make_consultation_for(db, *, branch, room, patient, doctor_record, start=None):
+    from app.models.consultation import Consultation as _Consultation
+
+    start = start or datetime.now(timezone.utc)
+    end = start + timedelta(minutes=30)
+    appointment = Appointment(
+        branch_id=branch.id,
+        patient_id=patient.id,
+        doctor_id=doctor_record.id,
+        room_id=room.id,
+        time_range=f"[{start.isoformat()},{end.isoformat()})",
+        status=AppointmentStatus.in_progress,
+    )
+    db.add(appointment)
+    db.commit()
+    db.refresh(appointment)
+
+    c = _Consultation(
+        appointment_id=appointment.id,
+        doctor_id=appointment.doctor_id,
+        patient_id=appointment.patient_id,
+        symptoms="List-endpoint test",
+    )
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    return c
+
+
+def test_list_consultations_doctor_sees_only_own(
+    client, db, staff_user, other_doctor_record, staff_password, consultation, branch, room, patient
+):
+    """`consultation` (conftest.py) belongs to `staff_user`/`doctor_record`.
+    A second consultation for the SAME patient, owned by `other_doctor_record`,
+    must not show up in `staff_user`'s list."""
+    other_consultation = _make_consultation_for(
+        db, branch=branch, room=room, patient=patient, doctor_record=other_doctor_record, start=datetime.now(timezone.utc) + timedelta(hours=1)
+    )
+    token = _login(client, staff_user.email, staff_password)
+
+    resp = client.get("/api/v1/consultations", params={"patient_id": str(patient.id)}, headers=_auth(token))
+
+    assert resp.status_code == 200, resp.text
+    ids = {row["id"] for row in resp.json()}
+    assert str(consultation.id) in ids
+    assert str(other_consultation.id) not in ids
+
+
+def test_list_consultations_system_admin_sees_all(
+    client, db, system_admin_user, other_doctor_record, staff_password, consultation, branch, room, patient
+):
+    other_consultation = _make_consultation_for(
+        db, branch=branch, room=room, patient=patient, doctor_record=other_doctor_record, start=datetime.now(timezone.utc) + timedelta(hours=1)
+    )
+    token = _login(client, system_admin_user.email, staff_password)
+
+    resp = client.get("/api/v1/consultations", params={"patient_id": str(patient.id)}, headers=_auth(token))
+
+    assert resp.status_code == 200, resp.text
+    ids = {row["id"] for row in resp.json()}
+    assert str(consultation.id) in ids
+    assert str(other_consultation.id) in ids
+
+
+def test_list_consultations_403_nurse(client, nurse_user, staff_password, consultation, patient):
+    """`GET /consultations` is doctor/system_admin ONLY (matches
+    LabOrderPage's `/lab/orders/new` route gate) -- nurse can read a single
+    consultation by id, but not this list endpoint."""
+    token = _login(client, nurse_user.email, staff_password)
+
+    resp = client.get("/api/v1/consultations", params={"patient_id": str(patient.id)}, headers=_auth(token))
+
+    assert resp.status_code == 403, resp.text
+
+
+def test_list_consultations_422_missing_patient_id(client, staff_user, staff_password):
+    token = _login(client, staff_user.email, staff_password)
+
+    resp = client.get("/api/v1/consultations", headers=_auth(token))
+
+    assert resp.status_code == 422, resp.text
+
+
+# ---------------------------------------------------------------------------
 # PATCH /api/v1/consultations/{id}/complete
 # ---------------------------------------------------------------------------
 

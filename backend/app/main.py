@@ -11,6 +11,7 @@ from app.routers import (
     billing,
     consultations,
     dashboard,
+    directory,
     emergency,
     lab,
     notifications,
@@ -49,6 +50,7 @@ app.include_router(billing.router)
 app.include_router(notifications.router)
 app.include_router(dashboard.router)
 app.include_router(queue.router)
+app.include_router(directory.router)
 
 
 @app.get("/health")

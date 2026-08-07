@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import BranchSelect from "../components/selects/BranchSelect";
 import {
   getNoShowRate,
   getOccupancy,
@@ -38,14 +39,12 @@ interface DashboardData {
  * is the entire access control surface for this page.
  *
  * Judgment calls (documented per FRONTEND-AGENT instructions):
- *  - **Branch filter**: a single free-text branch-ID input, same
- *    "enter the UUID directly" pattern `InvoicePage.tsx`/
- *    `NotificationHistoryPage.tsx` already use for their own system_admin
- *    branch filters -- there is no branch-lookup endpoint anywhere in this
- *    codebase. Left blank, every endpoint aggregates across all branches
- *    (per design decision #1 -- system_admin has no branch of their own,
- *    so unlike those other pages, an *empty* branch ID is itself a valid,
- *    meaningful "all branches" query here, not a blocked state).
+ *  - **Branch filter**: a `<BranchSelect allowAll>` (frontend
+ *    UUID-to-dropdown conversion follow-up). Left blank ("All branches"),
+ *    every endpoint aggregates across all branches (per design decision #1
+ *    -- system_admin has no branch of their own, so unlike other
+ *    system_admin pages, an *empty* branch ID is itself a valid, meaningful
+ *    "all branches" query here, not a blocked state).
  *  - **One shared "days" window**, not five independent ones: the PRP's
  *    endpoints default to 7 days (wait-times) or 30 days (revenue,
  *    no-shows) independently, but exposing three separate day-window
@@ -122,20 +121,9 @@ export default function ExecutiveDashboardPage(): JSX.Element {
       </div>
       <div className="patient-form">
         <label className="auth-label" htmlFor="dashboard-branch-id">
-          Branch ID (optional)
+          Branch
         </label>
-        <input
-          id="dashboard-branch-id"
-          className="auth-input"
-          type="text"
-          placeholder="00000000-0000-0000-0000-000000000000"
-          value={branchId}
-          onChange={(event) => setBranchId(event.target.value)}
-        />
-        <p className="field-hint">
-          There is no branch-lookup endpoint in scope -- enter the branch&apos;s UUID directly, or
-          leave blank to aggregate across every branch.
-        </p>
+        <BranchSelect id="dashboard-branch-id" value={branchId} onChange={setBranchId} allowAll />
         <label className="auth-label" htmlFor="dashboard-days">
           Window (days)
         </label>

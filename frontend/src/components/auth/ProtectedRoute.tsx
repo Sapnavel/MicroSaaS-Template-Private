@@ -3,6 +3,7 @@ import { Navigate } from "react-router-dom";
 
 import { useAuth } from "../../hooks/useAuth";
 import type { Role } from "../../types";
+import NavBar from "../layout/NavBar";
 
 interface ProtectedRouteProps {
   children: ReactNode;
@@ -28,5 +29,10 @@ export default function ProtectedRoute({ children, allowedRoles }: ProtectedRout
     return <Navigate to="/unauthorized" replace />;
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      <NavBar />
+      {children}
+    </>
+  );
 }

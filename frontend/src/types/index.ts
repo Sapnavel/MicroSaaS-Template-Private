@@ -299,6 +299,11 @@ export interface BedMatrixEntry {
   branchId: string;
   label: string;
   status: BedStatus;
+  /** The currently-open admission's id for this bed, or `null` when the bed
+   * has no open admission (i.e. not occupied). Lets the UI look up the
+   * admission id directly off the bed row for discharge/transfer, instead
+   * of asking the user to type it in by hand. */
+  activeAdmissionId: string | null;
 }
 
 /**
@@ -524,4 +529,99 @@ export interface QueueToken {
   calledAt: string | null;
   completedAt: string | null;
   estimatedWaitMinutes: number | null;
+}
+
+/**
+ * Lookup/reference shapes backing the "raw UUID text box -> dropdown"
+ * conversion across ~11 pages -- see the reusable `<XSelect>` components in
+ * `components/selects/` and their matching `services/*.ts` files
+ * (`branchService.ts`, `specialtyService.ts`, `doctorService.ts`,
+ * `roomService.ts`, `wardService.ts#listWards`, `drugService.ts`,
+ * `staffService.ts`, `appointmentService.ts`,
+ * `billingService.ts#listClaims`, `consultationService.ts#listConsultations`).
+ * These are select-list shapes only (just enough to render an option and
+ * carry an id), not full domain records -- several already have a fuller
+ * sibling type above (`Appointment`, `InsuranceClaim`, `Consultation`) for
+ * their respective modules' own read/write flows.
+ */
+export interface Branch {
+  id: string;
+  name: string;
+}
+
+export interface Specialty {
+  id: number;
+  name: string;
+}
+
+export interface Doctor {
+  id: string;
+  fullName: string;
+  specialtyId: number;
+  branchId: string;
+}
+
+export interface Room {
+  id: string;
+  name: string;
+  roomType: string;
+  branchId: string;
+}
+
+export interface Ward {
+  id: string;
+  name: string;
+  wardType: string;
+  branchId: string;
+}
+
+export interface Drug {
+  id: string;
+  name: string;
+  genericName: string | null;
+}
+
+export interface Staff {
+  id: string;
+  fullName: string;
+  role: string;
+  branchId: string | null;
+}
+
+/** `GET /api/v1/appointments` list-item shape for `<AppointmentSelect>` --
+ * adds `patientName` (for a human-readable option label) and omits
+ * `branchId` (the list is already branch-scoped by query param), so this is
+ * deliberately a distinct, thinner shape from the fuller `Appointment` type
+ * above rather than a reuse of it. */
+export interface AppointmentListItem {
+  id: string;
+  patientId: string;
+  patientName: string;
+  doctorId: string;
+  roomId: string;
+  status: string;
+  isEmergency: boolean;
+  triageLevel: number | null;
+}
+
+/** `GET /api/v1/billing/claims` list-item shape for `<ClaimSelect>` -- adds
+ * `patientName` (for a human-readable option label); distinct from the
+ * fuller `InsuranceClaim` type above (which lacks `patientName` but has the
+ * full claim/copay breakdown). */
+export interface ClaimListItem {
+  id: string;
+  invoiceId: string;
+  patientName: string;
+  state: ClaimState;
+  amount: number;
+}
+
+/** `GET /api/v1/consultations?patient_id=` list-item shape for
+ * `<ConsultationSelect>` -- a thin summary (id + label material only),
+ * distinct from the fuller `Consultation` type above. */
+export interface ConsultationListItem {
+  id: string;
+  appointmentId: string;
+  createdAt: string;
+  doctorName: string;
 }

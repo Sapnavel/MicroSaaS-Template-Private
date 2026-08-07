@@ -35,6 +35,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
+from app.models.audit import record_audit_event
 from app.models.tenant import Branch
 from app.models.token import RefreshToken
 from app.models.user import User, UserRole
@@ -117,10 +118,19 @@ def provision_staff(
     full_name: str,
     role: str,
     branch_id: uuid.UUID,
+    provisioned_by: uuid.UUID,
 ) -> User:
     """Admin-provisioned staff account. The only path that creates
     non-patient users. is_verified=True / is_active=True on create — an
-    admin creating the account is itself the verification step."""
+    admin creating the account is itself the verification step.
+
+    Whole-system review finding H1: this function used to have no audit
+    trail at all -- the single most access-control-relevant action in the
+    system (who gets a standing account with PHI access, at which role and
+    branch) went unrecorded, unlike every comparable action elsewhere
+    (patient merges, prescription overrides, lab transitions, ward
+    admissions). `provisioned_by` (the acting system_admin's `users.id`) is
+    now required and audit-logged."""
     try:
         role_enum = UserRole(role)
     except ValueError as exc:
@@ -150,6 +160,18 @@ def provision_staff(
         is_verified=True,
     )
     db.add(user)
+    db.flush()  # assign user.id for the audit log's resource_id
+
+    record_audit_event(
+        db,
+        branch_id=branch_id,
+        actor_user_id=provisioned_by,
+        action="staff.provisioned",
+        resource_type="user",
+        resource_id=str(user.id),
+        metadata={"role": role_enum.value, "branch_id": str(branch_id)},
+    )
+
     db.commit()
     db.refresh(user)
     return user

@@ -1,12 +1,149 @@
 :root {
   color-scheme: light;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --color-primary: #4f46e5;
+  --color-primary-dark: #3f37c9;
+  --color-primary-soft: #eef0fd;
+  --color-surface: #ffffff;
+  --color-bg: #f4f5f9;
+  --color-border: #e3e5ec;
+  --color-text: #1a1c23;
+  --color-text-muted: #656b7a;
+  --shadow-sm: 0 1px 2px rgba(23, 26, 45, 0.06);
+  --shadow-md: 0 4px 14px rgba(23, 26, 45, 0.08);
+  --shadow-lg: 0 12px 28px rgba(23, 26, 45, 0.12);
+  --radius-md: 10px;
+  --radius-lg: 14px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
-  background-color: #f5f6f8;
-  color: #1a1a1a;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+}
+
+a {
+  color: var(--color-primary);
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Persistent top bar -- see components/layout/NavBar.tsx. Rendered by
+   ProtectedRoute around every authenticated page. */
+.navbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1.75rem;
+  background-color: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.navbar-brand {
+  font-weight: 800;
+  font-size: 1.15rem;
+  letter-spacing: 0.02em;
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.navbar-user {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.navbar-user-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.navbar-role-badge {
+  text-transform: capitalize;
+  margin-left: 0;
+}
+
+/* Home page module directory -- see App.tsx's HomePage/MODULE_LINKS. */
+.module-section {
+  margin-bottom: 2rem;
+}
+
+.module-section-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  margin: 0 0 0.85rem 0;
+}
+
+.module-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.module-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 1.25rem;
+  text-decoration: none;
+  color: var(--color-text);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.module-card:hover,
+.module-card:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--color-primary);
+}
+
+.module-card-icon {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.module-card-label {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.module-card-description {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
 }
 
 .auth-page {
@@ -18,17 +155,21 @@ body {
   box-sizing: border-box;
 }
 
+.auth-page {
+  background: radial-gradient(circle at top left, var(--color-primary-soft), var(--color-bg) 60%);
+}
+
 .auth-form {
   width: 100%;
   max-width: 360px;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
   padding: 2rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-md);
 }
 
 .auth-form h1 {
@@ -43,26 +184,41 @@ body {
 }
 
 .auth-input {
-  padding: 0.5rem 0.6rem;
-  border: 1px solid #c9ccd1;
-  border-radius: 4px;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
   font-size: 1rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.auth-input:focus-visible {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
 }
 
 .auth-submit {
   margin-top: 1.25rem;
-  padding: 0.6rem 1rem;
+  padding: 0.65rem 1rem;
   border: none;
-  border-radius: 4px;
-  background-color: #2f6fed;
+  border-radius: 6px;
+  background-color: var(--color-primary);
   color: #ffffff;
   font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.05s ease;
+}
+
+.auth-submit:hover:not(:disabled) {
+  background-color: var(--color-primary-dark);
+}
+
+.auth-submit:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .auth-submit:disabled {
-  background-color: #9db6e8;
+  background-color: #b7bdf0;
   cursor: not-allowed;
 }
 
@@ -96,14 +252,15 @@ body {
 .page-container {
   min-height: 100vh;
   box-sizing: border-box;
-  padding: 2rem 1.5rem;
-  max-width: 960px;
+  padding: 2rem 1.75rem 3rem;
+  max-width: 1080px;
   margin: 0 auto;
 }
 
 .page-container h1 {
   margin: 0 0 1.5rem 0;
-  font-size: 1.5rem;
+  font-size: 1.6rem;
+  font-weight: 800;
 }
 
 .patient-form {
@@ -112,11 +269,11 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  padding: 2rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 1.75rem;
+  box-shadow: var(--shadow-sm);
   margin-bottom: 2rem;
 }
 
@@ -130,9 +287,10 @@ body {
 }
 
 .patient-card {
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
   padding: 1rem 1.25rem;
 }
 
@@ -183,24 +341,44 @@ body {
 
 .button-secondary {
   padding: 0.5rem 0.9rem;
-  border: 1px solid #2f6fed;
-  border-radius: 4px;
-  background-color: #ffffff;
-  color: #2f6fed;
+  border: 1px solid var(--color-primary);
+  border-radius: 6px;
+  background-color: var(--color-surface);
+  color: var(--color-primary);
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.button-secondary:hover:not(:disabled) {
+  background-color: var(--color-primary-soft);
+}
+
+.button-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .button-danger {
   padding: 0.5rem 0.9rem;
   border: 1px solid #b3261e;
-  border-radius: 4px;
-  background-color: #ffffff;
+  border-radius: 6px;
+  background-color: var(--color-surface);
   color: #b3261e;
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.button-danger:hover:not(:disabled) {
+  background-color: #fdecea;
+}
+
+.button-danger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .duplicate-list {
@@ -213,9 +391,10 @@ body {
 }
 
 .duplicate-card {
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
   padding: 1.25rem;
 }
 
@@ -279,8 +458,8 @@ body {
 }
 
 .badge-primary {
-  background-color: #e3ecfd;
-  color: #2f6fed;
+  background-color: var(--color-primary-soft);
+  color: var(--color-primary);
 }
 
 .list-plain {
@@ -293,9 +472,10 @@ body {
 }
 
 .list-item-card {
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
   padding: 0.75rem 1rem;
 }
 
@@ -424,19 +604,34 @@ body {
 
 .data-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   margin: 0.5rem 0 1rem 0;
   font-size: 0.9rem;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
 
 .data-table th,
 .data-table td {
   text-align: left;
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid #e0e0e0;
+  padding: 0.6rem 0.85rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.data-table tbody tr:hover {
+  background-color: var(--color-primary-soft);
 }
 
 .data-table th {
+  background-color: #fafbfd;
   color: #555;
   font-size: 0.8rem;
   text-transform: uppercase;
@@ -485,9 +680,10 @@ body {
 }
 
 .bed-card {
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
   padding: 0.9rem 1rem;
 }
 
@@ -508,4 +704,75 @@ body {
   flex-wrap: wrap;
   gap: 0.4rem;
   margin-top: 0.6rem;
+}
+
+/* Reusable <XSelect> lookup components -- components/selects/*.tsx. Most of
+   these are plain <select> elements and reuse .auth-input/.field-hint/
+   .empty-state from above as-is. Only the two async-typeahead components
+   (DrugSelect, PatientSearchSelect) need new CSS, for a dropdown-style
+   results list under a text input -- nothing existing in this file fits
+   that shape (the closest, .search-results/.patient-card on
+   PatientSearchPage, is a full-page result list, not a compact inline
+   one). Kept minimal and additive; nothing above was changed. */
+
+.select-search {
+  position: relative;
+}
+
+.select-search-results {
+  list-style: none;
+  margin: 0.35rem 0 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.select-search-result {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border: none;
+  background: none;
+  font-size: 0.9rem;
+  cursor: pointer;
+  color: var(--color-text);
+}
+
+.select-search-result:hover,
+.select-search-result:focus-visible {
+  background-color: var(--color-primary-soft);
+}
+
+.select-search-value {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background-color: var(--color-surface);
+  font-size: 0.9rem;
+}
+
+.select-search-change {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.select-search-change:hover {
+  text-decoration: underline;
 }

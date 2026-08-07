@@ -47,10 +47,12 @@ from app.models.appointment import Appointment
 from app.models.billing import ClaimState, InsuranceClaim, Invoice, InvoiceItem
 from app.models.consultation import Consultation, Prescription
 from app.models.lab import LabOrder, LabOrderStatus
+from app.models.patient import Patient
 from app.models.user import User, UserRole
 from app.models.ward import Admission, Bed, Ward
 from app.schemas.billing import (
     ChargeableEventResponse,
+    ClaimListItemResponse,
     ClaimStateUpdate,
     InsuranceClaimResponse,
     InvoiceCreate,
@@ -310,6 +312,60 @@ def list_chargeable_events(
         )
 
     return events
+
+
+def list_claims(
+    db: Session, current_user: User, branch_id_param: uuid.UUID, state_param: str | None
+) -> list[ClaimListItemResponse]:
+    """GET /api/v1/billing/claims?branch_id=&state= (required branch_id;
+    frontend UUID-to-dropdown conversion follow-up, backend phase) -- the
+    first standalone list endpoint for `InsuranceClaim` rows (previously only
+    reachable embedded inside `GET /invoices/{id}`'s response, see
+    `get_invoice` above).
+
+    `InsuranceClaim` carries no `branch_id` of its own -- tenant-scoped
+    transitively through `invoice_id -> invoices.branch_id`, the same
+    "no branch_id column of its own" pattern `InvoiceItem` uses (see
+    models/billing.py's module docstring). Joined to `Patient` (via
+    `Invoice.patient_id`) for `patient_name`.
+
+    `branch_id` is a required query param at the router (unlike the two
+    patient-scoped list endpoints above, which treat an omitted `branch_id`
+    as "all branches" for `system_admin`) -- `_resolve_branch_filter` still
+    applies its usual mismatch-rejection rule for non-admin callers, it just
+    never returns `None` here since the param is never omitted.
+    """
+    branch_id = _resolve_branch_filter(current_user, branch_id_param)
+    assert branch_id is not None  # branch_id_param is required at the router; see docstring above
+    authorize(current_user, "billing", "read", _BranchScoped(branch_id=branch_id))
+
+    if state_param is not None:
+        try:
+            ClaimState(state_param)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"unknown state: {state_param!r}") from exc
+
+    query = (
+        select(
+            InsuranceClaim.id,
+            InsuranceClaim.invoice_id,
+            Patient.full_name,
+            InsuranceClaim.state,
+            InsuranceClaim.claim_amount,
+        )
+        .join(Invoice, Invoice.id == InsuranceClaim.invoice_id)
+        .join(Patient, Patient.id == Invoice.patient_id)
+        .where(Invoice.branch_id == branch_id)
+    )
+    if state_param is not None:
+        query = query.where(InsuranceClaim.state == state_param)
+    query = query.order_by(InsuranceClaim.updated_at.desc())
+
+    rows = db.execute(query).all()
+    return [
+        ClaimListItemResponse(id=row[0], invoice_id=row[1], patient_name=row[2], state=row[3], amount=row[4])
+        for row in rows
+    ]
 
 
 def add_invoice_item(

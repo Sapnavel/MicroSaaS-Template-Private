@@ -3,6 +3,7 @@ import axios from "axios";
 import { api } from "./api";
 import type {
   Consultation,
+  ConsultationListItem,
   Diagnosis,
   PatientAllergy,
   Prescription,
@@ -69,6 +70,17 @@ interface ConsultationWire {
   ended_at: string | null;
   diagnoses: DiagnosisWire[];
   prescriptions: PrescriptionWire[];
+}
+
+/** `GET /api/v1/consultations?patient_id=` list-item shape -- backs
+ * `components/selects/ConsultationSelect.tsx`. Distinct from
+ * `ConsultationWire` above (a thin summary, not the full diagnoses/
+ * prescriptions payload). */
+interface ConsultationListItemWire {
+  id: string;
+  appointment_id: string;
+  created_at: string;
+  doctor_name: string;
 }
 
 interface SafetyFindingWire {
@@ -220,6 +232,15 @@ function toConsultation(wire: ConsultationWire): Consultation {
   };
 }
 
+function toConsultationListItem(wire: ConsultationListItemWire): ConsultationListItem {
+  return {
+    id: wire.id,
+    appointmentId: wire.appointment_id,
+    createdAt: wire.created_at,
+    doctorName: wire.doctor_name,
+  };
+}
+
 function toSafetyFinding(wire: SafetyFindingWire): SafetyFinding {
   return {
     source: wire.source,
@@ -228,6 +249,15 @@ function toSafetyFinding(wire: SafetyFindingWire): SafetyFinding {
     message: wire.message,
     drugIds: wire.drug_ids,
   };
+}
+
+/** `GET /api/v1/consultations?patient_id=` -- backs
+ * `components/selects/ConsultationSelect.tsx`. */
+export async function listConsultations(patientId: string): Promise<ConsultationListItem[]> {
+  const { data } = await api.get<ConsultationListItemWire[]>("/api/v1/consultations", {
+    params: { patient_id: patientId },
+  });
+  return data.map(toConsultationListItem);
 }
 
 export async function startConsultation(data: StartConsultationData): Promise<Consultation> {

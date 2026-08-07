@@ -102,6 +102,86 @@ def test_list_beds_front_desk_can_read(client, front_desk_user, staff_password, 
     assert resp.status_code == 200, resp.text
 
 
+def test_list_beds_active_admission_id_null_when_unoccupied(client, nurse_user, staff_password, bed):
+    """Frontend UUID-to-dropdown conversion follow-up: `active_admission_id`
+    is additive on this existing response -- `None` for a bed with no open
+    admission."""
+    token = _login(client, nurse_user.email, staff_password)
+
+    resp = client.get("/api/v1/wards/beds", params={"branch_id": str(nurse_user.branch_id)}, headers=_auth(token))
+
+    assert resp.status_code == 200, resp.text
+    row = next(r for r in resp.json() if r["id"] == str(bed.id))
+    assert row["active_admission_id"] is None
+
+
+def test_list_beds_active_admission_id_set_when_occupied(client, nurse_user, staff_password, bed, patient):
+    token = _login(client, nurse_user.email, staff_password)
+    admission_id = _admit(client, token, patient.id, bed.id).json()["id"]
+
+    resp = client.get("/api/v1/wards/beds", params={"branch_id": str(nurse_user.branch_id)}, headers=_auth(token))
+
+    assert resp.status_code == 200, resp.text
+    row = next(r for r in resp.json() if r["id"] == str(bed.id))
+    assert row["active_admission_id"] == admission_id
+
+
+def test_list_beds_active_admission_id_null_again_after_discharge(client, nurse_user, staff_password, bed, patient):
+    token = _login(client, nurse_user.email, staff_password)
+    admission_id = _admit(client, token, patient.id, bed.id).json()["id"]
+    discharge_resp = client.patch(f"/api/v1/wards/admissions/{admission_id}/discharge", json={}, headers=_auth(token))
+    assert discharge_resp.status_code == 200, discharge_resp.text
+
+    resp = client.get("/api/v1/wards/beds", params={"branch_id": str(nurse_user.branch_id)}, headers=_auth(token))
+
+    assert resp.status_code == 200, resp.text
+    row = next(r for r in resp.json() if r["id"] == str(bed.id))
+    assert row["active_admission_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/wards (frontend UUID-to-dropdown conversion follow-up)
+# ---------------------------------------------------------------------------
+
+
+def test_list_wards_200_own_branch(client, nurse_user, staff_password, ward):
+    token = _login(client, nurse_user.email, staff_password)
+
+    resp = client.get("/api/v1/wards", params={"branch_id": str(nurse_user.branch_id)}, headers=_auth(token))
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["id"] == str(ward.id)
+    assert body[0]["ward_type"] == "icu"
+
+
+def test_list_wards_422_missing_branch_id(client, nurse_user, staff_password, ward):
+    token = _login(client, nurse_user.email, staff_password)
+
+    resp = client.get("/api/v1/wards", headers=_auth(token))
+
+    assert resp.status_code == 422, resp.text
+
+
+def test_list_wards_422_mismatched_branch_id(client, nurse_user, staff_password, other_branch, ward):
+    token = _login(client, nurse_user.email, staff_password)
+
+    resp = client.get("/api/v1/wards", params={"branch_id": str(other_branch.id)}, headers=_auth(token))
+
+    assert resp.status_code == 422, resp.text
+
+
+def test_list_wards_403_lab_tech_cannot_read(client, lab_tech_user, staff_password, ward):
+    """`lab_tech` is not in `_BED_READ_ROLES` -- same read-roles as
+    `GET /wards/beds`."""
+    token = _login(client, lab_tech_user.email, staff_password)
+
+    resp = client.get("/api/v1/wards", params={"branch_id": str(lab_tech_user.branch_id)}, headers=_auth(token))
+
+    assert resp.status_code == 403, resp.text
+
+
 # ---------------------------------------------------------------------------
 # POST /api/v1/wards/admissions
 # ---------------------------------------------------------------------------

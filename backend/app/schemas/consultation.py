@@ -120,6 +120,24 @@ class ConsultationResponse(BaseModel):
     prescriptions: list[PrescriptionResponse]
 
 
+class ConsultationListItemResponse(BaseModel):
+    """GET /api/v1/consultations?patient_id= response line (frontend
+    UUID-to-dropdown conversion follow-up, backend phase) -- feeds a
+    consultation-picker dropdown (e.g. an "attach this to which
+    consultation" field). Built by hand in services/consultation_service.py
+    from a `Consultation` joined through `Doctor` to `User` (not plain
+    `from_attributes` off a `Consultation` row alone -- `doctor_name` lives
+    on `User`, and `Consultation` has no `created_at` column of its own --
+    see models/consultation.py's module docstring -- `created_at` here is
+    `Consultation.started_at`, the closest analog: a consultation's
+    "creation time" and its clinical start time are the same moment)."""
+
+    id: UUID
+    appointment_id: UUID
+    created_at: datetime
+    doctor_name: str
+
+
 # --- Diagnoses ---------------------------------------------------------------
 
 

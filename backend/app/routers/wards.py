@@ -52,6 +52,7 @@ from app.schemas.ward import (
     OTScheduleCreate,
     OTScheduleResponse,
     TransferRequest,
+    WardResponse,
 )
 from app.services import ward_service
 from app.services.ward_engine import (
@@ -89,6 +90,18 @@ def list_beds(
         ward_id,
         BedStatus(status) if status is not None else None,
     )
+
+
+@router.get("")
+def list_wards(
+    branch_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(*_BED_READ_ROLES)),
+) -> list[WardResponse]:
+    """GET /api/v1/wards?branch_id= (required; frontend UUID-to-dropdown
+    conversion follow-up, backend phase). Same read-roles as `GET /beds`
+    above."""
+    return ward_service.list_wards(db, current_user, branch_id)
 
 
 @router.post("/admissions", status_code=status.HTTP_201_CREATED)

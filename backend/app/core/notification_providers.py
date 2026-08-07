@@ -37,19 +37,51 @@ class UnknownNotificationChannelError(KeyError):
     """
 
 
+def _redact_recipient(recipient: str) -> str:
+    """Mask a phone number/email for logging: keep enough to eyeball during
+    local debugging (does this look like the right recipient shape?)
+    without writing the full PHI value to application logs. Whole-system
+    review finding (Critical): this stub used to log `recipient` (a
+    decrypted `Patient.phone`/`User.email`) and the full `payload` in
+    cleartext at INFO level on every single notification send, across every
+    channel -- systemic PHI-in-logs, not a one-off, since this is the only
+    registered provider for sms/email/push. Never restore the un-redacted
+    form here."""
+    if len(recipient) <= 4:
+        return "*" * len(recipient)
+    return f"{'*' * (len(recipient) - 4)}{recipient[-4:]}"
+
+
 class LoggingNotificationProvider:
-    """Stub provider: logs the send it would have made and always
-    "succeeds" (`return True`). One instance is reused for all three
-    channels below (`sms`/`email`/`push`) since the stub behavior is
-    identical regardless of channel — the channel is passed through as a
-    parameter to `send`, not baked into the instance. A real provider per
-    channel (with real, channel-specific client setup) would instead need
-    one instance per channel, which is exactly why `_PROVIDERS` is keyed by
-    channel string rather than assuming a single shared instance.
+    """Stub provider: logs that a send WOULD have happened and always
+    "succeeds" (`return True`) -- it never logs the recipient or payload
+    in full (see `_redact_recipient` and the module-level PHI note below).
+    One instance is reused for all three channels below (`sms`/`email`/
+    `push`) since the stub behavior is identical regardless of channel —
+    the channel is passed through as a parameter to `send`, not baked into
+    the instance. A real provider per channel (with real, channel-specific
+    client setup) would instead need one instance per channel, which is
+    exactly why `_PROVIDERS` is keyed by channel string rather than
+    assuming a single shared instance.
     """
 
     def send(self, *, channel: str, recipient: str, template: str, payload: dict) -> bool:
-        logger.info("(stub) would send %s via %s to %s: %s", template, channel, recipient, payload)
+        # PHI note: `recipient` is a decrypted phone/email and `payload` may
+        # carry patient-identifying context (see notification_engine.py) --
+        # neither is logged in full. Only the payload's KEYS are logged
+        # (never values), enough to debug "did this event carry the fields
+        # I expected" without writing PHI to disk. A real provider
+        # implementation sending to an actual SMS/email/push API would not
+        # have this problem (the value goes to the provider's API call, not
+        # to a log line) -- this redaction exists specifically because this
+        # stub's only observable side effect IS a log line.
+        logger.info(
+            "(stub) would send %s via %s to %s (payload keys: %s)",
+            template,
+            channel,
+            _redact_recipient(recipient),
+            sorted(payload.keys()),
+        )
         return True
 
 

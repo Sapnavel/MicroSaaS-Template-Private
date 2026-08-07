@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 
+import AppointmentSelect from "../components/selects/AppointmentSelect";
+import BranchSelect from "../components/selects/BranchSelect";
+import SpecialtySelect from "../components/selects/SpecialtySelect";
 import { useAuth } from "../hooks/useAuth";
 import {
   checkInWithAppointment,
@@ -66,11 +69,11 @@ const TRANSITION_LABEL: Record<TokenStatus, string> = {
  *    queue snapshot" from design decision #6.
  *
  * Judgment calls (documented per FRONTEND-AGENT instructions):
- *  - `branchId`/`departmentId` UX mirrors `BedMatrixPage.tsx`/
- *    `NotificationHistoryPage.tsx`: free-text branch-ID input (no
- *    branch-lookup endpoint exists anywhere in this codebase) plus a numeric
- *    department-ID input. Unlike those pages, `departmentId` is required
- *    here (not optional) for *every* role, even though `GET /queue/board`
+ *  - `branchId`/`departmentId` UX is a `<BranchSelect>` + `<SpecialtySelect>`
+ *    pair (frontend UUID-to-dropdown conversion follow-up -- `department_id`
+ *    IS `Doctor.specialty_id`, see `queue_service.py`'s module docstring).
+ *    `departmentId` is required here (not optional) for *every* role, even
+ *    though `GET /queue/board`
  *    itself treats it as optional -- the WebSocket subscription needs one
  *    concrete `(branch_id, department_id)` pair to scope to, and this page
  *    always keeps the live board and the WebSocket subscription pointed at
@@ -209,29 +212,13 @@ export default function QueueBoardPage(): JSX.Element {
       </div>
       <div className="patient-form">
         <label className="auth-label" htmlFor="queue-branch-id">
-          Branch ID
+          Branch
         </label>
-        <input
-          id="queue-branch-id"
-          className="auth-input"
-          type="text"
-          placeholder="00000000-0000-0000-0000-000000000000"
-          value={branchId}
-          onChange={(event) => setBranchId(event.target.value)}
-        />
-        <p className="field-hint">
-          There is no branch-lookup endpoint in scope -- enter the branch&apos;s UUID directly.
-        </p>
+        <BranchSelect id="queue-branch-id" value={branchId} onChange={setBranchId} />
         <label className="auth-label" htmlFor="queue-department-id">
-          Department ID
+          Department
         </label>
-        <input
-          id="queue-department-id"
-          className="auth-input"
-          type="number"
-          value={departmentIdInput}
-          onChange={(event) => setDepartmentIdInput(event.target.value)}
-        />
+        <SpecialtySelect id="queue-department-id" value={departmentIdInput} onChange={setDepartmentIdInput} />
         <p className="field-hint">
           Required here even though the underlying GET treats it as optional -- the live WebSocket
           channel is scoped to one concrete (branch, department) pair.
@@ -265,21 +252,19 @@ export default function QueueBoardPage(): JSX.Element {
           </div>
           <form className="patient-form" onSubmit={(event) => void handleCheckIn(event)}>
             <label className="auth-label" htmlFor="queue-appointment-id">
-              Appointment ID
+              Appointment
             </label>
-            <input
+            <AppointmentSelect
               id="queue-appointment-id"
-              className="auth-input"
-              type="text"
-              placeholder="00000000-0000-0000-0000-000000000000"
               value={appointmentId}
-              onChange={(event) => setAppointmentId(event.target.value)}
-              required
+              onChange={setAppointmentId}
+              branchId={branchId}
+              departmentId={departmentIdInput ? Number(departmentIdInput) : undefined}
             />
             <p className="field-hint">
-              Branch and department are derived from the appointment server-side. Walk-in check-in
-              (no appointment) is available via `queueService.checkInWalkIn` but is not exposed in
-              this page -- see the doc comment on `QueueBoardPage` for why.
+              Scoped to the branch/department selected in Filters above. Walk-in check-in (no
+              appointment) is available via `queueService.checkInWalkIn` but is not exposed in this
+              page -- see the doc comment on `QueueBoardPage` for why.
             </p>
             {checkInError !== null && (
               <p className="auth-error" role="alert">

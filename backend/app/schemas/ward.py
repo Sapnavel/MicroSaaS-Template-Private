@@ -111,7 +111,18 @@ class BedMatrixEntryResponse(BaseModel):
     """GET /api/v1/wards/beds response line. Built by hand in
     `services/ward_service.list_beds` from a `Bed` joined to its `Ward` (not
     plain `from_attributes` off a `Bed` row alone -- `ward_name`/`branch_id`
-    live on `Ward`, not `Bed`)."""
+    live on `Ward`, not `Bed`).
+
+    `active_admission_id` is additive (frontend UUID-to-dropdown conversion
+    follow-up, backend phase): the id of the currently-open `Admission` row
+    for this bed (`discharged_at IS NULL`), or `None` if the bed has no open
+    admission. Lets the frontend read the admission id directly off the bed
+    row for discharge/transfer instead of asking the user to type it in by
+    hand. At most one open admission can exist per bed at any time --
+    `Admission.__table_args__`'s `EXCLUDE USING gist (bed_id WITH =,
+    stay_range WITH &&)` constraint (models/ward.py) guarantees this, so the
+    left join `list_beds` uses to populate this field can never fan out into
+    more than one row per bed."""
 
     id: uuid.UUID
     ward_id: uuid.UUID
@@ -119,6 +130,19 @@ class BedMatrixEntryResponse(BaseModel):
     branch_id: uuid.UUID
     label: str
     status: str
+    active_admission_id: uuid.UUID | None = None
+
+
+class WardResponse(BaseModel):
+    """GET /api/v1/wards response line (frontend UUID-to-dropdown conversion
+    follow-up, backend phase)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    ward_type: str
+    branch_id: uuid.UUID
 
 
 class OTScheduleResponse(BaseModel):

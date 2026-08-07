@@ -139,6 +139,21 @@ def decode_token(token: str) -> dict[str, Any]:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid or expired token") from exc
 
 
+def is_token_blocklisted(jti: str) -> bool:
+    """Public (whole-system review finding H1, WebSocket auth): the queue
+    board WebSocket endpoint (websocket/queue_board.py) needs the same
+    revocation check `get_current_user` runs, but can't use
+    `get_current_user` directly -- it's a `Depends(oauth2_scheme)` REST
+    dependency expecting an `Authorization` header, and browsers can't set
+    custom headers on a WebSocket upgrade request, so that endpoint reads
+    the token from a query param instead and validates it manually. Rather
+    than reach into the module-private `_redis_client` from another file,
+    this small wrapper is the reuse seam -- same rationale
+    `get_caller_branch_id` gives for being public instead of internal-only.
+    """
+    return bool(_redis_client.exists(f"blocklist:{jti}"))
+
+
 def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
@@ -150,7 +165,7 @@ def get_current_user(
     # Revocation check happens BEFORE the DB round-trip: a blocklisted jti
     # should never even cause a user lookup (Security Design section 4).
     jti = payload.get("jti")
-    if jti and _redis_client.exists(f"blocklist:{jti}"):
+    if jti and is_token_blocklisted(jti):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "token has been revoked")
 
     user = db.get(User, payload["sub"])
@@ -489,4 +504,100 @@ def _nurse_writes_own_branch_queue(user: User, resource: Any) -> bool:
 
 @policy("doctor", "queue_token", "read")
 def _doctor_reads_own_branch_queue(user: User, resource: Any) -> bool:
+    return True
+
+
+# Frontend UUID-to-dropdown conversion follow-up (backend phase): `directory`
+# is the resource_type used for the branch-scoped reference-data lookups in
+# routers/directory.py (`GET /doctors`, `GET /rooms` -- both pass a
+# `directory_service._BranchScoped` stand-in carrying just `branch_id`, same
+# pattern every other branch-scoped module's own `_BranchScoped` uses).
+# `GET /branches`/`GET /specialties`/`GET /drugs` never call `authorize()` at
+# all (no `branch_id` column on those tables to scope -- see
+# directory_service.py's module docstring), so they need no policy here.
+# `GET /staff` is `system_admin`-only at the router (`require_role`) and
+# never calls `authorize()` either (see directory_service.list_staff's
+# docstring). As with every prior branch-scoped module's own policies above,
+# the tenant guard inside `authorize()` is what actually enforces branch
+# isolation for `GET /doctors`/`GET /rooms` -- these policies exist only so a
+# role that passes the tenant guard isn't then denied by authorize()'s "no
+# policy registered" default-deny. Every staff role that can reach these two
+# endpoints (routers/directory.py's `_ANY_STAFF_ROLE`) gets a read policy;
+# `system_admin` needs no separate entry: `_admin_bypass` above already
+# covers it.
+@policy("doctor", "directory", "read")
+def _doctor_reads_directory(user: User, resource: Any) -> bool:
+    return True
+
+
+@policy("nurse", "directory", "read")
+def _nurse_reads_directory(user: User, resource: Any) -> bool:
+    return True
+
+
+@policy("front_desk", "directory", "read")
+def _front_desk_reads_directory(user: User, resource: Any) -> bool:
+    return True
+
+
+@policy("lab_tech", "directory", "read")
+def _lab_tech_reads_directory(user: User, resource: Any) -> bool:
+    return True
+
+
+@policy("pharmacist", "directory", "read")
+def _pharmacist_reads_directory(user: User, resource: Any) -> bool:
+    return True
+
+
+@policy("billing_admin", "directory", "read")
+def _billing_admin_reads_directory(user: User, resource: Any) -> bool:
+    return True
+
+
+# Frontend UUID-to-dropdown conversion follow-up (backend phase): `appointment`
+# is the resource_type used for `GET /api/v1/appointments` (routers/
+# appointments.py) -- a branch-wide "list appointments to check in" read, with
+# no single ORM row to authorize against (a `appointment_service._BranchScoped`
+# stand-in carries just `branch_id`, same pattern as `queue_token`'s own
+# `list_queue`). Role gate matches `GET /queue/board`'s existing read-roles
+# (front_desk/nurse/doctor/system_admin) since this feeds the queue check-in
+# dropdown. As with every prior branch-scoped module's own policies above,
+# the tenant guard inside `authorize()` is what actually enforces branch
+# isolation here; these policies exist only so a role that passes the tenant
+# guard isn't then denied by authorize()'s "no policy registered"
+# default-deny. `system_admin` needs no separate entry: `_admin_bypass` above
+# already covers it.
+@policy("front_desk", "appointment", "read")
+def _front_desk_reads_branch_appointments(user: User, resource: Any) -> bool:
+    return True
+
+
+@policy("nurse", "appointment", "read")
+def _nurse_reads_branch_appointments(user: User, resource: Any) -> bool:
+    return True
+
+
+@policy("doctor", "appointment", "read")
+def _doctor_reads_branch_appointments(user: User, resource: Any) -> bool:
+    return True
+
+
+# Whole-system review finding C1: DELETE /api/v1/appointments/{id} called
+# `require_role(...)` only (role membership) with no `authorize()` call at
+# all, so any front_desk/doctor/system_admin could cancel any appointment at
+# any branch -- the exact cross-tenant write every other branch-scoped
+# module's "authorize() before mutate" convention exists to prevent. These
+# "write" policies plus the `authorize()` call added in
+# routers/appointments.py close that gap; the tenant guard inside
+# `authorize()` (branch_id match) is what actually enforces isolation here,
+# same as the sibling "read" policies just above. `system_admin` needs no
+# separate entry: `_admin_bypass` already covers it.
+@policy("front_desk", "appointment", "write")
+def _front_desk_writes_branch_appointments(user: User, resource: Any) -> bool:
+    return True
+
+
+@policy("doctor", "appointment", "write")
+def _doctor_writes_branch_appointments(user: User, resource: Any) -> bool:
     return True

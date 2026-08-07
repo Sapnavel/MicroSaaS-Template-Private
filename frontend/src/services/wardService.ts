@@ -1,7 +1,7 @@
 import axios from "axios";
 
 import { api } from "./api";
-import type { Admission, BedMatrixEntry, BedStatus, OTSchedule } from "../types";
+import type { Admission, BedMatrixEntry, BedStatus, OTSchedule, Ward } from "../types";
 
 /**
  * This file is the only place in the frontend allowed to know about the
@@ -25,6 +25,16 @@ interface BedMatrixEntryWire {
   branch_id: string;
   label: string;
   status: BedStatus;
+  active_admission_id: string | null;
+}
+
+/** `GET /api/v1/wards` list-item shape -- backs `components/selects/WardSelect.tsx`.
+ * Distinct from `BedMatrixEntryWire` above (a bed, not a ward). */
+interface WardWire {
+  id: string;
+  name: string;
+  ward_type: string;
+  branch_id: string;
 }
 
 interface AdmissionWire {
@@ -149,6 +159,16 @@ function toBedMatrixEntry(wire: BedMatrixEntryWire): BedMatrixEntry {
     branchId: wire.branch_id,
     label: wire.label,
     status: wire.status,
+    activeAdmissionId: wire.active_admission_id,
+  };
+}
+
+function toWard(wire: WardWire): Ward {
+  return {
+    id: wire.id,
+    name: wire.name,
+    wardType: wire.ward_type,
+    branchId: wire.branch_id,
   };
 }
 
@@ -173,6 +193,16 @@ function toOTSchedule(wire: OTScheduleWire): OTSchedule {
     startTime: wire.start_time,
     endTime: wire.end_time,
   };
+}
+
+/** `GET /api/v1/wards?branch_id=` -- backs `components/selects/WardSelect.tsx`.
+ * Unlike `getBedMatrix` above, `branchId` is always required here (not
+ * optional), per the lookup endpoint's contract. */
+export async function listWards(branchId: string): Promise<Ward[]> {
+  const { data } = await api.get<WardWire[]>("/api/v1/wards", {
+    params: { branch_id: branchId },
+  });
+  return data.map(toWard);
 }
 
 export async function getBedMatrix(params: GetBedMatrixParams = {}): Promise<BedMatrixEntry[]> {

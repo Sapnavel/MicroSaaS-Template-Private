@@ -26,6 +26,27 @@ class AppointmentResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AppointmentListItemResponse(BaseModel):
+    """GET /api/v1/appointments response line (frontend UUID-to-dropdown
+    conversion follow-up, backend phase) -- feeds the queue check-in
+    dropdown (a front_desk/nurse/doctor picks an existing appointment to
+    check a patient into the queue for, rather than typing a raw
+    appointment_id -- see services/queue_service.check_in's
+    appointment-linked path). Built by hand in
+    services/appointment_service.py from an `Appointment` joined to
+    `Patient` (not plain `from_attributes` off an `Appointment` row alone --
+    `patient_name` lives on `Patient`, not `Appointment`)."""
+
+    id: UUID
+    patient_id: UUID
+    patient_name: str
+    doctor_id: UUID
+    room_id: UUID
+    status: str
+    is_emergency: bool
+    triage_level: int | None = None
+
+
 class EmergencyBookingCreate(BaseModel):
     patient_id: UUID
     specialty_id: int

@@ -1,6 +1,7 @@
 import { api } from "./api";
 import type {
   ChargeableEvent,
+  ClaimListItem,
   ClaimState,
   Invoice,
   InvoiceItem,
@@ -62,6 +63,17 @@ interface ChargeableEventWire {
   event_date: string;
 }
 
+/** `GET /api/v1/billing/claims` list-item shape -- backs
+ * `components/selects/ClaimSelect.tsx`. Distinct from `InsuranceClaimWire`
+ * above (adds `patient_name`, omits the copay/claim-amount breakdown). */
+interface ClaimListItemWire {
+  id: string;
+  invoice_id: string;
+  patient_name: string;
+  state: ClaimState;
+  amount: number;
+}
+
 /** GET /billing/invoices/{id} response shape -- invoice + items + claim (if any). */
 interface InvoiceDetailWire {
   invoice: InvoiceWire;
@@ -99,6 +111,11 @@ export interface ListPatientInvoicesParams {
 
 export interface ListChargeableEventsParams {
   branchId?: string;
+}
+
+export interface ListClaimsParams {
+  branchId: string;
+  state?: ClaimState;
 }
 
 function toInvoice(wire: InvoiceWire): Invoice {
@@ -141,6 +158,16 @@ function toChargeableEvent(wire: ChargeableEventWire): ChargeableEvent {
     sourceId: wire.source_id,
     suggestedDescription: wire.suggested_description,
     eventDate: wire.event_date,
+  };
+}
+
+function toClaimListItem(wire: ClaimListItemWire): ClaimListItem {
+  return {
+    id: wire.id,
+    invoiceId: wire.invoice_id,
+    patientName: wire.patient_name,
+    state: wire.state,
+    amount: wire.amount,
   };
 }
 
@@ -207,6 +234,17 @@ export async function splitInvoice(invoiceId: string, data: SplitInvoiceData): P
   };
   const { data: wire } = await api.post<InvoiceWire>(`/api/v1/billing/invoices/${invoiceId}/split`, body);
   return toInvoice(wire);
+}
+
+/** `GET /api/v1/billing/claims?branch_id=&state=(optional)` -- backs
+ * `components/selects/ClaimSelect.tsx`. */
+export async function listClaims(params: ListClaimsParams): Promise<ClaimListItem[]> {
+  const query: Record<string, string> = { branch_id: params.branchId };
+  if (params.state) {
+    query.state = params.state;
+  }
+  const { data } = await api.get<ClaimListItemWire[]>("/api/v1/billing/claims", { params: query });
+  return data.map(toClaimListItem);
 }
 
 export async function setClaimState(claimId: string, state: ClaimState): Promise<InsuranceClaim> {

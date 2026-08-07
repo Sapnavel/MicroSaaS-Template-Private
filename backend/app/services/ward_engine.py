@@ -206,10 +206,24 @@ def admit_patient(
         BedConflictError: the `EXCLUDE` constraint rejected the insert
             (authoritative guard, catches drift/races the fast-path missed).
         ResourceBusyError: the Redis lock could not be acquired.
+
+    Whole-system review finding H1 (concurrency-consistency pass): `Bed` was
+    fetched via a plain `db.get()` here even though `ward_service.py`'s
+    caller (`_get_bed_or_404`) already loads the SAME bed, on the SAME
+    session, before this lock is even acquired -- the exact identity-map
+    staleness bug `discharge_patient`'s docstring documents fixing for
+    `Admission`, never extended to `Bed`. `db.get()` after that earlier read
+    returns the cached (pre-lock) object with no query at all, so the
+    fast-path check below could pass against a `status` a concurrent
+    request already changed. Fixed the same way: `SELECT ... FOR UPDATE`
+    + `execution_options(populate_existing=True)`, forcing the cached
+    object's attributes to be overwritten from a fresh, lock-holding read.
     """
     try:
         with lock_manager.acquire_all([f"bed:{bed_id}"]):
-            bed = db.get(Bed, bed_id)
+            bed = db.execute(
+                select(Bed).where(Bed.id == bed_id).with_for_update().execution_options(populate_existing=True)
+            ).scalar_one_or_none()
             if bed is None:
                 raise BedNotFoundError(f"bed {bed_id} not found")
             if bed.status != BedStatus.available:
@@ -314,7 +328,18 @@ def discharge_patient(
             admission.discharged_at = discharge_time
             db.add(admission)
 
-            bed = db.get(Bed, admission.bed_id)
+            # Whole-system review finding H1: same populate_existing fix as
+            # admit_patient/transfer_patient/set_bed_status, applied here too
+            # for consistency -- this particular write doesn't branch on the
+            # bed's current status (N5 in that same review), so staleness
+            # doesn't change the outcome, but reading a possibly-stale object
+            # right before overwriting its status is still worth avoiding.
+            bed = db.execute(
+                select(Bed)
+                .where(Bed.id == admission.bed_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            ).scalar_one_or_none()
             assert bed is not None  # FK guarantees this; admission couldn't exist otherwise
             bed.status = BedStatus.cleaning
             db.add(bed)
@@ -404,7 +429,16 @@ def transfer_patient(
             if admission.discharged_at is not None:
                 raise AlreadyDischargedError(f"admission {admission_id} is already discharged")
 
-            new_bed = db.get(Bed, new_bed_id)
+            # Whole-system review finding H1: same `db.get()` staleness fix
+            # as `admit_patient` -- `new_bed`/`old_bed` are forcibly
+            # refreshed under `FOR UPDATE`, not read from this session's
+            # identity map, which could otherwise hold a pre-lock, stale copy.
+            new_bed = db.execute(
+                select(Bed)
+                .where(Bed.id == new_bed_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            ).scalar_one_or_none()
             if new_bed is None:
                 raise BedNotFoundError(f"bed {new_bed_id} not found")
             if new_bed.status != BedStatus.available:
@@ -416,7 +450,12 @@ def transfer_patient(
             admission.discharged_at = now
             db.add(admission)
 
-            old_bed = db.get(Bed, old_bed_id)
+            old_bed = db.execute(
+                select(Bed)
+                .where(Bed.id == old_bed_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            ).scalar_one_or_none()
             assert old_bed is not None
             old_bed.status = BedStatus.cleaning
             db.add(old_bed)

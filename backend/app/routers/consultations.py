@@ -44,6 +44,7 @@ from app.schemas.consultation import (
     AllergyResponse,
     ConsultationCompleteRequest,
     ConsultationCreate,
+    ConsultationListItemResponse,
     ConsultationResponse,
     DiagnosisCreate,
     DiagnosisResponse,
@@ -92,6 +93,18 @@ def _finding_response_dict(finding: SafetyFinding) -> dict[str, object]:
         message=finding.message,
         drug_ids=list(finding.drug_ids),
     ).model_dump(mode="json")
+
+
+@router.get("")
+def list_consultations(
+    patient_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(*_DOCTOR_ADMIN)),
+) -> list[ConsultationListItemResponse]:
+    """GET /api/v1/consultations?patient_id= (frontend UUID-to-dropdown
+    conversion follow-up, backend phase). Matches LabOrderPage's
+    `/lab/orders/new` route gate (doctor + system_admin, see App.tsx)."""
+    return consultation_service.list_consultations_for_patient(db, current_user, patient_id)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

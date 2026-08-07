@@ -124,6 +124,25 @@ class InvoiceDetailResponse(BaseModel):
     claim: InsuranceClaimResponse | None
 
 
+class ClaimListItemResponse(BaseModel):
+    """GET /api/v1/billing/claims response line (frontend UUID-to-dropdown
+    conversion follow-up, backend phase) -- the first standalone list
+    endpoint for `InsuranceClaim` rows (previously only reachable embedded
+    inside `GET /billing/invoices/{id}`'s response). Built by hand in
+    services/billing_service.py from an `InsuranceClaim` joined through
+    `Invoice` to `Patient` (not plain `from_attributes` off an
+    `InsuranceClaim` row alone -- `patient_name` lives on `Patient`, several
+    joins away). `amount` mirrors `InsuranceClaimResponse.claim_amount`'s
+    plain `Decimal` serialization exactly -- the established
+    money-serialization convention in this schema module."""
+
+    id: uuid.UUID
+    invoice_id: uuid.UUID
+    patient_name: str
+    state: str
+    amount: Decimal
+
+
 class ChargeableEventResponse(BaseModel):
     """GET /api/v1/billing/patients/{patient_id}/chargeable-events response
     line -- a clinical event that is chargeable (per-type checks, see

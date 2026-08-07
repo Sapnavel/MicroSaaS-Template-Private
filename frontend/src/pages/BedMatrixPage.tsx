@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 
+import BranchSelect from "../components/selects/BranchSelect";
+import PatientSearchSelect from "../components/selects/PatientSearchSelect";
+import WardSelect from "../components/selects/WardSelect";
 import { useAuth } from "../hooks/useAuth";
 import {
   admitPatient,
@@ -57,18 +60,16 @@ interface AdmitFormState {
 const emptyAdmitForm: AdmitFormState = { patientId: "", startTime: "" };
 
 interface DischargeFormState {
-  admissionId: string;
   dischargeTime: string;
 }
 
-const emptyDischargeForm: DischargeFormState = { admissionId: "", dischargeTime: "" };
+const emptyDischargeForm: DischargeFormState = { dischargeTime: "" };
 
 interface TransferFormState {
-  admissionId: string;
   newBedId: string;
 }
 
-const emptyTransferForm: TransferFormState = { admissionId: "", newBedId: "" };
+const emptyTransferForm: TransferFormState = { newBedId: "" };
 
 type RowAction = "admit" | "discharge" | "transfer";
 
@@ -91,24 +92,16 @@ type RowAction = "admit" | "discharge" | "transfer";
  *    actions (only a nurse marks a bed clean/blocked).
  *
  * Judgment calls (documented per FRONTEND-AGENT instructions):
- *  - `branchId` UX for `system_admin` mirrors `PharmacyInventoryPage.tsx`:
- *    a single free-text branch-ID input (no "list branches" endpoint
- *    exists), and the matrix doesn't auto-load until one is entered.
- *    Non-`system_admin` callers never see this input -- their branch is
- *    implicit, so `branch_id` is simply never sent, same as Pharmacy.
- *  - **Admission-ID gap**: `GET /wards/beds` deliberately does NOT return an
- *    admission id per the PRP's contract (a bed row is `{id, ward_id,
- *    ward_name, branch_id, label, status}`), but `discharge`/`transfer`
- *    are keyed by admission id, not bed id. There is no "get the active
- *    admission for this bed" endpoint in scope. This page tracks admission
- *    ids it learns about client-side (from a successful `admitPatient`/
- *    `transferPatient` response, keyed by bed id) and pre-fills the
- *    discharge/transfer form when that's available; for a bed that was
- *    already occupied before this session (or after a page reload), the
- *    field is blank and the caller must enter the admission UUID directly
- *    -- the same "no lookup, plain UUID text entry" precedent already
- *    established for `drug_id`/`patient_id` elsewhere in this codebase.
- *    A field hint says this explicitly rather than silently failing.
+ *  - `branchId` UX for `system_admin` is a `<BranchSelect>` (frontend
+ *    UUID-to-dropdown conversion follow-up); the matrix doesn't auto-load
+ *    until one is picked. Non-`system_admin` callers never see this field --
+ *    their branch is implicit, so `branch_id` is simply never sent.
+ *  - **Admission id** now comes straight off `BedMatrixEntry.activeAdmissionId`
+ *    (the backend's `GET /wards/beds` extension, same conversion follow-up)
+ *    instead of the old client-side "remember it from the last admit/transfer
+ *    response, otherwise ask the user to type it in" workaround -- discharge
+ *    and transfer read it directly from the occupied bed's own row, so
+ *    there's no longer a manual admission-ID field on either form at all.
  *  - **Transfer target picker**: rather than a blind free-text bed-ID
  *    input, the "new bed" field is a `<select>` populated from the beds
  *    already loaded into this matrix with `status === "available"` --
@@ -124,14 +117,16 @@ export default function BedMatrixPage(): JSX.Element {
   const canChangeStatus = role === "nurse" || role === "system_admin";
 
   const [branchId, setBranchId] = useState<string>("");
+  // WardSelect needs a concrete branch id regardless of role -- a
+  // non-system_admin's branch is implicit (never shown/edited as its own
+  // field), so this falls back to their own `user.branchId`.
+  const effectiveBranchId = isSystemAdmin ? branchId : user?.branchId ?? "";
   const [wardIdFilter, setWardIdFilter] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<BedStatus | "">("");
 
   const [beds, setBeds] = useState<BedMatrixEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-
-  const [admissionIdByBed, setAdmissionIdByBed] = useState<Record<string, string>>({});
 
   const [openAction, setOpenAction] = useState<{ bedId: string; action: RowAction } | null>(null);
   const [admitForm, setAdmitForm] = useState<AdmitFormState>(emptyAdmitForm);
@@ -182,9 +177,9 @@ export default function BedMatrixPage(): JSX.Element {
     setRowErrors((previous) => ({ ...previous, [bedId]: null }));
     setOpenAction({ bedId, action });
     if (action === "discharge") {
-      setDischargeForm({ admissionId: admissionIdByBed[bedId] ?? "", dischargeTime: "" });
+      setDischargeForm(emptyDischargeForm);
     } else if (action === "transfer") {
-      setTransferForm({ admissionId: admissionIdByBed[bedId] ?? "", newBedId: "" });
+      setTransferForm(emptyTransferForm);
     } else {
       setAdmitForm(emptyAdmitForm);
     }
@@ -203,9 +198,10 @@ export default function BedMatrixPage(): JSX.Element {
         bedId: bed.id,
         startTime: new Date(admitForm.startTime).toISOString(),
       });
-      setAdmissionIdByBed((previous) => ({ ...previous, [bed.id]: admission.id }));
       setBeds((previous) =>
-        (previous ?? []).map((item) => (item.id === bed.id ? { ...item, status: "occupied" } : item)),
+        (previous ?? []).map((item) =>
+          item.id === bed.id ? { ...item, status: "occupied", activeAdmissionId: admission.id } : item,
+        ),
       );
       closeRowAction();
     } catch (error) {
@@ -223,23 +219,20 @@ export default function BedMatrixPage(): JSX.Element {
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> => {
     event.preventDefault();
-    if (!dischargeForm.admissionId.trim()) {
-      setRowErrors((previous) => ({ ...previous, [bed.id]: "Admission ID is required." }));
+    if (!bed.activeAdmissionId) {
+      setRowErrors((previous) => ({ ...previous, [bed.id]: "This bed has no open admission." }));
       return;
     }
     setPendingBedId(bed.id);
     try {
       await dischargePatient(
-        dischargeForm.admissionId.trim(),
+        bed.activeAdmissionId,
         dischargeForm.dischargeTime ? new Date(dischargeForm.dischargeTime).toISOString() : undefined,
       );
-      setAdmissionIdByBed((previous) => {
-        const next = { ...previous };
-        delete next[bed.id];
-        return next;
-      });
       setBeds((previous) =>
-        (previous ?? []).map((item) => (item.id === bed.id ? { ...item, status: "cleaning" } : item)),
+        (previous ?? []).map((item) =>
+          item.id === bed.id ? { ...item, status: "cleaning", activeAdmissionId: null } : item,
+        ),
       );
       closeRowAction();
     } catch (error) {
@@ -257,26 +250,24 @@ export default function BedMatrixPage(): JSX.Element {
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> => {
     event.preventDefault();
-    if (!transferForm.admissionId.trim() || !transferForm.newBedId) {
-      setRowErrors((previous) => ({ ...previous, [bed.id]: "Admission ID and a target bed are required." }));
+    if (!bed.activeAdmissionId) {
+      setRowErrors((previous) => ({ ...previous, [bed.id]: "This bed has no open admission." }));
+      return;
+    }
+    if (!transferForm.newBedId) {
+      setRowErrors((previous) => ({ ...previous, [bed.id]: "A target bed is required." }));
       return;
     }
     setPendingBedId(bed.id);
     try {
-      const newAdmission = await transferPatient(transferForm.admissionId.trim(), transferForm.newBedId);
-      setAdmissionIdByBed((previous) => {
-        const next = { ...previous };
-        delete next[bed.id];
-        next[newAdmission.bedId] = newAdmission.id;
-        return next;
-      });
+      const newAdmission = await transferPatient(bed.activeAdmissionId, transferForm.newBedId);
       setBeds((previous) =>
         (previous ?? []).map((item) => {
           if (item.id === bed.id) {
-            return { ...item, status: "cleaning" };
+            return { ...item, status: "cleaning", activeAdmissionId: null };
           }
           if (item.id === newAdmission.bedId) {
-            return { ...item, status: "occupied" };
+            return { ...item, status: "occupied", activeAdmissionId: newAdmission.id };
           }
           return item;
         }),
@@ -346,31 +337,19 @@ export default function BedMatrixPage(): JSX.Element {
         {isSystemAdmin && (
           <>
             <label className="auth-label" htmlFor="bed-matrix-branch-id">
-              Branch ID
+              Branch
             </label>
-            <input
-              id="bed-matrix-branch-id"
-              className="auth-input"
-              type="text"
-              placeholder="00000000-0000-0000-0000-000000000000"
-              value={branchId}
-              onChange={(event) => setBranchId(event.target.value)}
-            />
-            <p className="field-hint">
-              There is no branch-lookup endpoint in scope -- enter the branch&apos;s UUID directly.
-            </p>
+            <BranchSelect id="bed-matrix-branch-id" value={branchId} onChange={setBranchId} />
           </>
         )}
         <label className="auth-label" htmlFor="bed-matrix-ward-id">
-          Ward ID (optional)
+          Ward (optional)
         </label>
-        <input
+        <WardSelect
           id="bed-matrix-ward-id"
-          className="auth-input"
-          type="text"
-          placeholder="00000000-0000-0000-0000-000000000000"
           value={wardIdFilter}
-          onChange={(event) => setWardIdFilter(event.target.value)}
+          onChange={setWardIdFilter}
+          branchId={effectiveBranchId}
         />
         <label className="auth-label" htmlFor="bed-matrix-status">
           Status
@@ -404,7 +383,7 @@ export default function BedMatrixPage(): JSX.Element {
       )}
 
       {isSystemAdmin && beds === null && (
-        <p className="empty-state">Enter a branch ID above, then click "Refresh" to view its bed matrix.</p>
+        <p className="empty-state">Select a branch above, then click "Refresh" to view its bed matrix.</p>
       )}
 
       {beds !== null && beds.length === 0 && (
@@ -489,17 +468,12 @@ export default function BedMatrixPage(): JSX.Element {
                         onSubmit={(event) => void handleAdmitSubmit(bed, event)}
                       >
                         <label className="auth-label" htmlFor={`admit-patient-${bed.id}`}>
-                          Patient ID (UUID)
+                          Patient
                         </label>
-                        <input
+                        <PatientSearchSelect
                           id={`admit-patient-${bed.id}`}
-                          className="auth-input"
-                          type="text"
                           value={admitForm.patientId}
-                          onChange={(event) =>
-                            setAdmitForm((previous) => ({ ...previous, patientId: event.target.value }))
-                          }
-                          required
+                          onChange={(value) => setAdmitForm((previous) => ({ ...previous, patientId: value }))}
                         />
                         <label className="auth-label" htmlFor={`admit-start-${bed.id}`}>
                           Start time
@@ -535,23 +509,6 @@ export default function BedMatrixPage(): JSX.Element {
                         className="override-reason-form"
                         onSubmit={(event) => void handleDischargeSubmit(bed, event)}
                       >
-                        <label className="auth-label" htmlFor={`discharge-admission-${bed.id}`}>
-                          Admission ID (UUID)
-                        </label>
-                        <input
-                          id={`discharge-admission-${bed.id}`}
-                          className="auth-input"
-                          type="text"
-                          value={dischargeForm.admissionId}
-                          onChange={(event) =>
-                            setDischargeForm((previous) => ({ ...previous, admissionId: event.target.value }))
-                          }
-                          required
-                        />
-                        <p className="field-hint">
-                          No endpoint looks up the active admission for a bed -- pre-filled if this bed was
-                          admitted earlier in this browser session, otherwise enter it directly.
-                        </p>
                         <label className="auth-label" htmlFor={`discharge-time-${bed.id}`}>
                           Discharge time (optional)
                         </label>
@@ -588,23 +545,6 @@ export default function BedMatrixPage(): JSX.Element {
                         className="override-reason-form"
                         onSubmit={(event) => void handleTransferSubmit(bed, event)}
                       >
-                        <label className="auth-label" htmlFor={`transfer-admission-${bed.id}`}>
-                          Admission ID (UUID)
-                        </label>
-                        <input
-                          id={`transfer-admission-${bed.id}`}
-                          className="auth-input"
-                          type="text"
-                          value={transferForm.admissionId}
-                          onChange={(event) =>
-                            setTransferForm((previous) => ({ ...previous, admissionId: event.target.value }))
-                          }
-                          required
-                        />
-                        <p className="field-hint">
-                          No endpoint looks up the active admission for a bed -- pre-filled if this bed was
-                          admitted earlier in this browser session, otherwise enter it directly.
-                        </p>
                         <label className="auth-label" htmlFor={`transfer-bed-${bed.id}`}>
                           New bed
                         </label>

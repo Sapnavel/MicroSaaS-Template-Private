@@ -54,11 +54,13 @@ from app.models.appointment import Appointment, AppointmentStatus
 from app.models.audit import record_audit_event
 from app.models.consultation import Consultation, Diagnosis, Drug, PatientAllergy, Prescription, PrescriptionItem
 from app.models.patient import Patient
+from app.models.resource import Doctor
 from app.models.user import User, UserRole
 from app.schemas.consultation import (
     AllergyCreate,
     ConsultationCompleteRequest,
     ConsultationCreate,
+    ConsultationListItemResponse,
     ConsultationResponse,
     DiagnosisCreate,
     DiagnosisSummary,
@@ -184,6 +186,56 @@ def get_consultation(db: Session, current_user: User, consultation_id: uuid.UUID
     return consultation
 
 
+def list_consultations_for_patient(
+    db: Session, current_user: User, patient_id: uuid.UUID
+) -> list[ConsultationListItemResponse]:
+    """GET /api/v1/consultations?patient_id= (frontend UUID-to-dropdown
+    conversion follow-up, backend phase). Router gates to doctor/system_admin
+    only (routers/consultations.py, matching LabOrderPage's `/lab/orders/new`
+    route gate).
+
+    For a `doctor` caller, this returns ONLY the caller's own consultations
+    for this patient -- consistent with the ownership-based ABAC policy every
+    other consultation read/write in this module enforces
+    (`_doctor_reads_own_consultations` in core/security.py), applied here as
+    a query-level filter rather than one `authorize()` call per row (which
+    would mean silently dropping some rows on a 403 instead of raising it --
+    a query-level filter is the cleaner way to express "only mine" for a list
+    endpoint). A doctor-role caller with no wired `Doctor` record
+    (`current_user.doctor_id is None`, see `core/security.py`'s
+    `get_current_user` docstring) gets an empty list rather than an error --
+    same "the equality check just never matches" behavior the registered
+    ownership policy already gives every other doctor-scoped read/write in
+    this module.
+
+    `system_admin` sees every consultation for the patient, no ownership
+    filter -- an admin auditing a patient's full clinical history is exactly
+    what this role exists for (same `_admin_bypass` reasoning every other
+    module's ABAC policy block documents).
+    """
+    query = (
+        select(Consultation.id, Consultation.appointment_id, Consultation.started_at, User.full_name)
+        .join(Doctor, Doctor.id == Consultation.doctor_id)
+        .join(User, User.id == Doctor.user_id)
+        .where(Consultation.patient_id == patient_id)
+        .order_by(Consultation.started_at.desc())
+    )
+
+    if current_user.role == UserRole.doctor:
+        caller_doctor_id = getattr(current_user, "doctor_id", None)
+        if caller_doctor_id is None:
+            return []
+        query = query.where(Consultation.doctor_id == caller_doctor_id)
+    # else: system_admin (the only other role require_role permits on this
+    # endpoint) -- no ownership filter, see docstring.
+
+    rows = db.execute(query).all()
+    return [
+        ConsultationListItemResponse(id=row[0], appointment_id=row[1], created_at=row[2], doctor_name=row[3])
+        for row in rows
+    ]
+
+
 def complete_consultation(
     db: Session, current_user: User, consultation_id: uuid.UUID, payload: ConsultationCompleteRequest
 ) -> Consultation:
@@ -299,6 +351,17 @@ def add_allergy(db: Session, current_user: User, patient_id: uuid.UUID, payload:
     )
     db.add(allergy)
     db.flush()  # assign allergy.id for the audit resource_id
+    # Whole-system review finding H2: metadata used to include the raw
+    # `substance` (and implicitly identified the specific allergy) in
+    # `audit_logs.metadata`, a plain unencrypted JSONB column -- breaking
+    # the exact PHI-duplication discipline lab_service.py documents and
+    # follows ("never the value itself, only whether it happened"). The
+    # substance/reaction text lives in `patient_allergies` (its own,
+    # purpose-built table) and is reachable from `resource_id` by anyone
+    # with legitimate access to review this audit entry; `severity` alone
+    # (a coarse mild/moderate/severe tier, not the allergy itself) is kept
+    # since it's useful to triage which audit entries need urgent review
+    # without duplicating the PHI-identifying substance/reaction text.
     record_audit_event(
         db,
         branch_id=None,  # patients/allergies are not branch-scoped, see models/patient.py
@@ -306,7 +369,7 @@ def add_allergy(db: Session, current_user: User, patient_id: uuid.UUID, payload:
         action="patient_allergy.recorded",
         resource_type="patient_allergy",
         resource_id=str(allergy.id),
-        metadata={"patient_id": str(patient_id), "substance": payload.substance, "severity": payload.severity},
+        metadata={"patient_id": str(patient_id), "severity": payload.severity},
     )
     db.commit()
     db.refresh(allergy)

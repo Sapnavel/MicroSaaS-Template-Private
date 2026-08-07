@@ -98,6 +98,7 @@ from app.schemas.ward import (
     OTScheduleCreate,
     OTScheduleResponse,
     TransferRequest,
+    WardResponse,
 )
 from app.services import ward_engine
 
@@ -356,14 +357,23 @@ def list_beds(
     # reach this branch (non-admin always resolves to a concrete branch_id
     # above).
 
-    query = select(
-        Bed.id,
-        Bed.ward_id,
-        Ward.name,
-        Ward.branch_id,
-        Bed.label,
-        Bed.status,
-    ).join(Ward, Ward.id == Bed.ward_id)
+    # `active_admission_id`: LEFT JOIN against the single open (undischarged)
+    # Admission for this bed, if any -- see BedMatrixEntryResponse's
+    # docstring for why this can never fan out into more than one row per
+    # bed (the EXCLUDE constraint on Admission).
+    query = (
+        select(
+            Bed.id,
+            Bed.ward_id,
+            Ward.name,
+            Ward.branch_id,
+            Bed.label,
+            Bed.status,
+            Admission.id,
+        )
+        .join(Ward, Ward.id == Bed.ward_id)
+        .outerjoin(Admission, (Admission.bed_id == Bed.id) & (Admission.discharged_at.is_(None)))
+    )
 
     if branch_id is not None:
         query = query.where(Ward.branch_id == branch_id)
@@ -381,9 +391,26 @@ def list_beds(
             branch_id=row[3],
             label=row[4],
             status=row[5].value if isinstance(row[5], BedStatus) else row[5],
+            active_admission_id=row[6],
         )
         for row in rows
     ]
+
+
+def list_wards(db: Session, current_user: User, branch_id_param: uuid.UUID) -> list[WardResponse]:
+    """GET /api/v1/wards?branch_id= (required; frontend UUID-to-dropdown
+    conversion follow-up, backend phase). Same branch-resolution/tenant-
+    scoping discipline as `list_beds` above -- `_resolve_branch_filter`'s
+    "system_admin may omit to mean all branches" branch is simply never
+    reached here since `branch_id` is a required query param at the router
+    (unlike `list_beds`'s optional one), so this always resolves to a
+    concrete `branch_id`, for every role."""
+    branch_id = _resolve_branch_filter(current_user, branch_id_param)
+    assert branch_id is not None  # branch_id_param is required at the router; see docstring above
+    authorize(current_user, "ward", "read", _BranchScoped(branch_id=branch_id))
+
+    wards = db.execute(select(Ward).where(Ward.branch_id == branch_id).order_by(Ward.name)).scalars().all()
+    return [WardResponse.model_validate(w) for w in wards]
 
 
 def list_ot_schedules(

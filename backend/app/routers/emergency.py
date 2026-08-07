@@ -1,7 +1,9 @@
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.security import require_role
+from app.core.security import get_caller_branch_id, require_role
 from app.database import get_db
 from app.models.user import User
 from app.schemas.appointment import AppointmentResponse, EmergencyBookingCreate
@@ -17,11 +19,19 @@ def book_emergency(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role("nurse", "front_desk", "doctor", "system_admin")),
 ) -> AppointmentResponse:
-    if current_user.branch_id is None:
+    """Whole-system review finding H3: resolved the caller's branch from the
+    live `current_user.branch_id` instead of the token-frozen
+    `get_caller_branch_id()` every other branch-scoped module uses -- fixed
+    to match. (Unlike H2's sibling finding on `create_appointment`, no
+    client-supplied doctor_id/room_id exists here to cross-branch-validate:
+    `emergency_engine` resolves the on-shift doctor/room internally, already
+    filtered by `request.branch_id`.)"""
+    branch_id_str = get_caller_branch_id(current_user)
+    if branch_id_str is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "user has no branch assigned")
 
     request = EmergencyRequest(
-        branch_id=current_user.branch_id,
+        branch_id=uuid.UUID(branch_id_str),
         patient_id=payload.patient_id,
         specialty_id=payload.specialty_id,
         triage_level=payload.triage_level,

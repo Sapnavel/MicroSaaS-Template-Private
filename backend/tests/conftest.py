@@ -279,6 +279,7 @@ def staff_user(db, branch, staff_password):
         full_name="Dr. Staff Member",
         role=UserRole.doctor.value,
         branch_id=branch.id,
+        provisioned_by=uuid.uuid4(),
     )
     return user
 
@@ -314,6 +315,7 @@ def system_admin_user(db, branch, staff_password):
         full_name="System Admin",
         role=UserRole.system_admin.value,
         branch_id=branch.id,
+        provisioned_by=uuid.uuid4(),
     )
     return user
 
@@ -338,6 +340,7 @@ def front_desk_user(db, branch, staff_password):
         full_name="Front Desk Clerk",
         role=UserRole.front_desk.value,
         branch_id=branch.id,
+        provisioned_by=uuid.uuid4(),
     )
 
 
@@ -351,6 +354,7 @@ def nurse_user(db, branch, staff_password):
         full_name="Nurse Nightingale",
         role=UserRole.nurse.value,
         branch_id=branch.id,
+        provisioned_by=uuid.uuid4(),
     )
 
 
@@ -415,6 +419,7 @@ def other_doctor_user(db, branch, staff_password):
         full_name="Dr. Other Doctor",
         role=UserRole.doctor.value,
         branch_id=branch.id,
+        provisioned_by=uuid.uuid4(),
     )
 
 
@@ -509,6 +514,7 @@ def lab_tech_user(db, branch, staff_password):
         full_name="Lab Tech Larry",
         role=UserRole.lab_tech.value,
         branch_id=branch.id,
+        provisioned_by=uuid.uuid4(),
     )
 
 
@@ -536,6 +542,7 @@ def pharmacist_user(db, branch, staff_password):
         full_name="Pharmacist Patty",
         role=UserRole.pharmacist.value,
         branch_id=branch.id,
+        provisioned_by=uuid.uuid4(),
     )
 
 
@@ -553,6 +560,7 @@ def other_branch_pharmacist_user(db, other_branch, staff_password):
         full_name="Pharmacist Percy",
         role=UserRole.pharmacist.value,
         branch_id=other_branch.id,
+        provisioned_by=uuid.uuid4(),
     )
 
 
@@ -674,6 +682,7 @@ def billing_admin_user(db, branch, staff_password):
         full_name="Billing Admin Betty",
         role=UserRole.billing_admin.value,
         branch_id=branch.id,
+        provisioned_by=uuid.uuid4(),
     )
 
 
