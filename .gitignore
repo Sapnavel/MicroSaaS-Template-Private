@@ -29,3 +29,6 @@ Thumbs.db
 
 # Docker
 postgres_data/
+
+# Database backups (database/backup.sh's default output dir)
+backups/

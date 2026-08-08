@@ -227,6 +227,32 @@ the backend behind a load balancer, a real object-storage-backed static host
 for the frontend build) is genuine infrastructure work beyond what's built
 here.
 
+## Backups
+
+`database/backup.sh` dumps the live Postgres database (`pg_dump --clean
+--if-exists`, gzipped) to a host-side `backups/` directory — deliberately
+outside the `postgres_data` Docker volume, so a mistaken `docker volume rm`/
+`down -v` on the live database can't take the backups down with it too. Old
+dumps are pruned after `HMS_BACKUP_RETENTION_DAYS` (default 14).
+
+```bash
+# One-off backup
+./database/backup.sh
+
+# Nightly via cron (server's local time zone)
+crontab -e
+# add: 0 2 * * * /opt/hms/database/backup.sh >> /opt/hms/backups/backup.log 2>&1
+
+# Restore (DESTRUCTIVE -- drops and recreates every table first)
+./database/restore.sh backups/hms_20260101_020000.sql.gz
+```
+
+This is on-host, single-copy backup — it protects against accidental data
+loss/corruption and bad migrations, not against the VPS itself being lost
+(disk failure, account compromise). Copying dumps off-host (object storage,
+another machine) periodically is recommended for that and isn't done by
+these scripts.
+
 ## Known limitations
 
 - **Google OAuth**: not implemented. `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`
