@@ -261,7 +261,8 @@ export default function ExecutiveDashboardPage(): JSX.Element {
                     <th>Branch</th>
                     <th>Considered</th>
                     <th>No-shows</th>
-                    <th>Rate</th>
+                    <th>Actual rate</th>
+                    <th>Avg. predicted risk</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -271,6 +272,11 @@ export default function ExecutiveDashboardPage(): JSX.Element {
                       <td>{row.totalConsidered}</td>
                       <td>{row.noShowCount}</td>
                       <td>{(row.noShowRate * 100).toFixed(1)}%</td>
+                      <td>
+                        {row.avgPredictedNoShowRisk !== null
+                          ? `${(row.avgPredictedNoShowRisk * 100).toFixed(1)}%`
+                          : "—"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

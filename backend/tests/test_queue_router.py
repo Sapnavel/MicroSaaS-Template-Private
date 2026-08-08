@@ -197,6 +197,21 @@ def test_check_in_200_walk_in_success(client, front_desk_user, staff_password, b
     assert body["branch_id"] == str(branch.id)
     assert body["department_id"] == specialty.id
     assert body["appointment_id"] is None
+    assert body["is_priority"] is False
+
+
+def test_check_in_200_walk_in_priority(client, front_desk_user, staff_password, branch, specialty):
+    """HMS Project Completion Prompt gap ("emergency queue priority")."""
+    token = _login(client, front_desk_user.email, staff_password)
+
+    resp = client.post(
+        "/api/v1/queue/check-in",
+        json={"branch_id": str(branch.id), "department_id": specialty.id, "is_priority": True},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["is_priority"] is True
 
 
 def test_check_in_404_nonexistent_appointment(client, front_desk_user, staff_password):

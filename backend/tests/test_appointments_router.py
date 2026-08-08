@@ -240,3 +240,249 @@ def test_list_appointments_403_cross_branch(client, front_desk_user, staff_passw
     resp = client.get("/api/v1/appointments", params={"branch_id": str(other_branch.id)}, headers=_auth(token))
 
     assert resp.status_code == 403, resp.text
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/appointments/available-slots -- HMS Project Completion Prompt
+# gap ("available-slot display"). Algorithm coverage lives in
+# test_scheduling_engine.py; this is router-level plumbing only.
+# ---------------------------------------------------------------------------
+
+
+def test_available_slots_200(client, db, front_desk_user, staff_password, doctor_record):
+    from app.models.resource import DoctorShift
+
+    start = datetime(2030, 3, 1, 9, 0, tzinfo=timezone.utc)
+    end = datetime(2030, 3, 1, 10, 0, tzinfo=timezone.utc)
+    db.add(DoctorShift(doctor_id=doctor_record.id, shift_range=f"[{start.isoformat()},{end.isoformat()})"))
+    db.commit()
+
+    token = _login(client, front_desk_user.email, staff_password)
+    resp = client.get(
+        "/api/v1/appointments/available-slots",
+        params={"doctor_id": str(doctor_record.id), "date": "2030-03-01", "duration_minutes": 20},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()) > 0
+
+
+def test_available_slots_404_unknown_doctor(client, front_desk_user, staff_password):
+    token = _login(client, front_desk_user.email, staff_password)
+    resp = client.get(
+        "/api/v1/appointments/available-slots",
+        params={"doctor_id": str(uuid.uuid4()), "date": "2030-03-01"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 404, resp.text
+
+
+def test_available_slots_403_pharmacist(client, pharmacist_user, staff_password, doctor_record):
+    token = _login(client, pharmacist_user.email, staff_password)
+    resp = client.get(
+        "/api/v1/appointments/available-slots",
+        params={"doctor_id": str(doctor_record.id), "date": "2030-03-01"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 403, resp.text
+
+
+# ---------------------------------------------------------------------------
+# PATCH /api/v1/appointments/{id}/reschedule -- HMS Project Completion
+# Prompt gap ("rescheduling").
+# ---------------------------------------------------------------------------
+
+
+def test_reschedule_200_books_new_slot_and_cancels_old(
+    client, db, front_desk_user, staff_password, branch, doctor_record, room, patient
+):
+    now = datetime.now(timezone.utc)
+    old = _make_appointment(
+        db,
+        branch_id=branch.id,
+        doctor_id=doctor_record.id,
+        room_id=room.id,
+        patient_id=patient.id,
+        status=AppointmentStatus.booked,
+        start=now,
+    )
+    new_start = now + timedelta(days=1)
+
+    token = _login(client, front_desk_user.email, staff_password)
+    resp = client.patch(
+        f"/api/v1/appointments/{old.id}/reschedule",
+        json={
+            "doctor_id": str(doctor_record.id),
+            "room_id": str(room.id),
+            "start_time": new_start.isoformat(),
+            "duration_minutes": 30,
+        },
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "booked"
+    assert body["patient_id"] == str(patient.id)
+    assert body["reschedule_of_id"] == str(old.id)
+    assert body["id"] != str(old.id)
+
+    db.expire_all()
+    reloaded_old = db.get(Appointment, old.id)
+    assert reloaded_old.status == AppointmentStatus.cancelled
+
+
+def test_reschedule_409_when_new_slot_conflicts(
+    client, db, front_desk_user, staff_password, branch, doctor_record, room, patient
+):
+    """The new slot is booked FIRST, so a conflict there must leave the OLD
+    appointment untouched -- see `scheduling_engine.reschedule_appointment`'s
+    docstring."""
+    now = datetime.now(timezone.utc)
+    old = _make_appointment(
+        db,
+        branch_id=branch.id,
+        doctor_id=doctor_record.id,
+        room_id=room.id,
+        patient_id=patient.id,
+        status=AppointmentStatus.booked,
+        start=now,
+    )
+    conflicting_start = now + timedelta(days=1)
+    _make_appointment(
+        db,
+        branch_id=branch.id,
+        doctor_id=doctor_record.id,
+        room_id=room.id,
+        patient_id=patient.id,
+        status=AppointmentStatus.booked,
+        start=conflicting_start,
+    )
+
+    token = _login(client, front_desk_user.email, staff_password)
+    resp = client.patch(
+        f"/api/v1/appointments/{old.id}/reschedule",
+        json={
+            "doctor_id": str(doctor_record.id),
+            "room_id": str(room.id),
+            "start_time": conflicting_start.isoformat(),
+            "duration_minutes": 20,
+        },
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 409, resp.text
+
+    db.expire_all()
+    reloaded_old = db.get(Appointment, old.id)
+    assert reloaded_old.status == AppointmentStatus.booked  # untouched
+
+
+def test_reschedule_409_not_reschedulable_status(
+    client, db, front_desk_user, staff_password, branch, doctor_record, room, patient
+):
+    now = datetime.now(timezone.utc)
+    cancelled = _make_appointment(
+        db,
+        branch_id=branch.id,
+        doctor_id=doctor_record.id,
+        room_id=room.id,
+        patient_id=patient.id,
+        status=AppointmentStatus.cancelled,
+        start=now,
+    )
+
+    token = _login(client, front_desk_user.email, staff_password)
+    resp = client.patch(
+        f"/api/v1/appointments/{cancelled.id}/reschedule",
+        json={
+            "doctor_id": str(doctor_record.id),
+            "room_id": str(room.id),
+            "start_time": (now + timedelta(days=1)).isoformat(),
+            "duration_minutes": 20,
+        },
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 409, resp.text
+
+
+def test_reschedule_404_appointment_not_found(client, front_desk_user, staff_password, doctor_record, room):
+    token = _login(client, front_desk_user.email, staff_password)
+
+    resp = client.patch(
+        f"/api/v1/appointments/{uuid.uuid4()}/reschedule",
+        json={
+            "doctor_id": str(doctor_record.id),
+            "room_id": str(room.id),
+            "start_time": datetime.now(timezone.utc).isoformat(),
+            "duration_minutes": 20,
+        },
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 404, resp.text
+
+
+def test_reschedule_403_pharmacist(
+    client, db, pharmacist_user, staff_password, branch, doctor_record, room, patient
+):
+    now = datetime.now(timezone.utc)
+    old = _make_appointment(
+        db,
+        branch_id=branch.id,
+        doctor_id=doctor_record.id,
+        room_id=room.id,
+        patient_id=patient.id,
+        status=AppointmentStatus.booked,
+        start=now,
+    )
+
+    token = _login(client, pharmacist_user.email, staff_password)
+    resp = client.patch(
+        f"/api/v1/appointments/{old.id}/reschedule",
+        json={
+            "doctor_id": str(doctor_record.id),
+            "room_id": str(room.id),
+            "start_time": (now + timedelta(days=1)).isoformat(),
+            "duration_minutes": 20,
+        },
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 403, resp.text
+
+
+def test_reschedule_403_cross_branch(
+    client, db, front_desk_user, staff_password, other_branch, doctor_record, room, patient
+):
+    """`old.branch_id` is `other_branch`, but `front_desk_user` belongs to
+    `branch` -- `authorize()`'s tenant guard must deny before the
+    doctor/room validation even runs, so the FK values here don't need to
+    be branch-consistent (this row could never be created through the
+    real booking endpoint, only via this direct-insert test helper)."""
+    now = datetime.now(timezone.utc)
+    old = _make_appointment(
+        db,
+        branch_id=other_branch.id,
+        doctor_id=doctor_record.id,
+        room_id=room.id,
+        patient_id=patient.id,
+        status=AppointmentStatus.booked,
+        start=now,
+    )
+
+    token = _login(client, front_desk_user.email, staff_password)
+    resp = client.patch(
+        f"/api/v1/appointments/{old.id}/reschedule",
+        json={
+            "doctor_id": str(doctor_record.id),
+            "room_id": str(room.id),
+            "start_time": (now + timedelta(days=1)).isoformat(),
+            "duration_minutes": 20,
+        },
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 403, resp.text

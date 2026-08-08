@@ -1,6 +1,8 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 
+import BranchSelect from "../components/selects/BranchSelect";
+import DrugSelect from "../components/selects/DrugSelect";
 import { useAuth } from "../hooks/useAuth";
 import {
   dispense,
@@ -38,10 +40,10 @@ const emptyForm: DispenseFormState = { drugId: "", quantity: "", reference: "" }
  *    drug" -- distinct remediation from a 409 (receive stock first, vs.
  *    order more of what's already there).
  *
- * Judgment call: `branchId` is a single free-text input shown only for
- * `system_admin`, same pattern as `PharmacyInventoryPage.tsx` and the drug-ID
- * UUID inputs already established by `PrescriptionPage.tsx` -- there is no
- * "list branches" endpoint in this PRP's scope.
+ * Judgment call: `branchId` is a `<BranchSelect>` shown only for
+ * `system_admin`, same pattern as `PharmacyInventoryPage.tsx`. `drugId` is a
+ * `<DrugSelect>` in place of the old raw-UUID text box (frontend
+ * UUID-to-dropdown conversion follow-up).
  */
 export default function PharmacyDispensePage(): JSX.Element {
   const { user } = useAuth();
@@ -123,31 +125,19 @@ export default function PharmacyDispensePage(): JSX.Element {
         {isSystemAdmin && (
           <>
             <label className="auth-label" htmlFor="dispense-branch-id">
-              Branch ID
+              Branch
             </label>
-            <input
-              id="dispense-branch-id"
-              className="auth-input"
-              type="text"
-              placeholder="00000000-0000-0000-0000-000000000000"
-              value={branchId}
-              onChange={(event) => setBranchId(event.target.value)}
-              required
-            />
+            <BranchSelect id="dispense-branch-id" value={branchId} onChange={setBranchId} required />
           </>
         )}
 
         <label className="auth-label" htmlFor="dispense-drug-id">
-          Drug ID (UUID)
+          Drug
         </label>
-        <input
+        <DrugSelect
           id="dispense-drug-id"
-          className="auth-input"
-          type="text"
-          placeholder="00000000-0000-0000-0000-000000000000"
           value={form.drugId}
-          onChange={(event) => setForm((previous) => ({ ...previous, drugId: event.target.value }))}
-          required
+          onChange={(value) => setForm((previous) => ({ ...previous, drugId: value }))}
         />
 
         <label className="auth-label" htmlFor="dispense-quantity">

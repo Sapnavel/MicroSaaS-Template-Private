@@ -58,6 +58,7 @@ interface NoShowRateWire {
   total_considered: number;
   no_show_count: number;
   no_show_rate: number;
+  avg_predicted_no_show_risk: number | null;
   no_show_risk_score_note: string;
 }
 
@@ -129,6 +130,7 @@ function toNoShowRate(wire: NoShowRateWire): NoShowRate {
     totalConsidered: wire.total_considered,
     noShowCount: wire.no_show_count,
     noShowRate: wire.no_show_rate,
+    avgPredictedNoShowRisk: wire.avg_predicted_no_show_risk,
     noShowRiskScoreNote: wire.no_show_risk_score_note,
   };
 }

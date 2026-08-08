@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
+import AuthBrandHeader from "../components/auth/AuthBrandHeader";
 import { useAuth } from "../hooks/useAuth";
 import { extractErrorMessage } from "../utils/errors";
 
@@ -33,7 +34,9 @@ export default function LoginPage(): JSX.Element {
   return (
     <main className="auth-page">
       <form className="auth-form" onSubmit={(event) => void handleSubmit(event)}>
+        <AuthBrandHeader />
         <h1>Staff Login</h1>
+        <p className="auth-form-subtitle">Sign in with your work email and password.</p>
 
         {error !== null && (
           <p className="auth-error" role="alert">

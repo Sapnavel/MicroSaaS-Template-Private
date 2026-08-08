@@ -28,12 +28,25 @@ import type {
  * explicitly as a query param on the two branch-scoped GETs.
  */
 
+/** `total_amount`/`tax_rate_percent`/`discount_amount`/`tax_amount`/
+ * `grand_total` are `Decimal` fields on the backend -- Pydantic serializes
+ * `Decimal` as a JSON **string** ("0.00"), not a number, to avoid float
+ * precision loss (confirmed against the live API, not assumed -- every
+ * other module's money-shaped fields use plain `float` and serialize as
+ * numbers; billing is the only module using `Decimal`). The `toX` mappers
+ * below are the one place that converts these to JS `number`s via
+ * `Number(...)`, matching this file's own "wire format is only known here"
+ * discipline. */
 interface InvoiceWire {
   id: string;
   patient_id: string;
   branch_id: string;
   status: InvoiceStatus;
-  total_amount: number;
+  total_amount: string;
+  tax_rate_percent: string | null;
+  discount_amount: string;
+  tax_amount: string;
+  grand_total: string;
   created_at: string;
 }
 
@@ -43,15 +56,15 @@ interface InvoiceItemWire {
   source_type: SourceType;
   source_id: string;
   description: string;
-  amount: number;
+  amount: string;
 }
 
 interface InsuranceClaimWire {
   id: string;
   invoice_id: string;
   payer_name: string;
-  claim_amount: number;
-  patient_copay: number;
+  claim_amount: string;
+  patient_copay: string;
   state: ClaimState;
   updated_at: string;
 }
@@ -71,7 +84,7 @@ interface ClaimListItemWire {
   invoice_id: string;
   patient_name: string;
   state: ClaimState;
-  amount: number;
+  amount: string;
 }
 
 /** GET /billing/invoices/{id} response shape -- invoice + items + claim (if any). */
@@ -124,7 +137,11 @@ function toInvoice(wire: InvoiceWire): Invoice {
     patientId: wire.patient_id,
     branchId: wire.branch_id,
     status: wire.status,
-    totalAmount: wire.total_amount,
+    totalAmount: Number(wire.total_amount),
+    taxRatePercent: wire.tax_rate_percent !== null ? Number(wire.tax_rate_percent) : null,
+    discountAmount: Number(wire.discount_amount),
+    taxAmount: Number(wire.tax_amount),
+    grandTotal: Number(wire.grand_total),
     createdAt: wire.created_at,
   };
 }
@@ -136,7 +153,7 @@ function toInvoiceItem(wire: InvoiceItemWire): InvoiceItem {
     sourceType: wire.source_type,
     sourceId: wire.source_id,
     description: wire.description,
-    amount: wire.amount,
+    amount: Number(wire.amount),
   };
 }
 
@@ -145,8 +162,8 @@ function toInsuranceClaim(wire: InsuranceClaimWire): InsuranceClaim {
     id: wire.id,
     invoiceId: wire.invoice_id,
     payerName: wire.payer_name,
-    claimAmount: wire.claim_amount,
-    patientCopay: wire.patient_copay,
+    claimAmount: Number(wire.claim_amount),
+    patientCopay: Number(wire.patient_copay),
     state: wire.state,
     updatedAt: wire.updated_at,
   };
@@ -167,7 +184,7 @@ function toClaimListItem(wire: ClaimListItemWire): ClaimListItem {
     invoiceId: wire.invoice_id,
     patientName: wire.patient_name,
     state: wire.state,
-    amount: wire.amount,
+    amount: Number(wire.amount),
   };
 }
 
@@ -254,6 +271,17 @@ export async function setClaimState(claimId: string, state: ClaimState): Promise
   return toInsuranceClaim(wire);
 }
 
+/** `POST /api/v1/billing/invoices/{id}/send-reminder` -- HMS Project
+ * Completion Prompt gap fix: "Payment reminders" had no trigger anywhere.
+ * Staff-triggered (there is no due-date/scheduler concept in this schema to
+ * fire it automatically -- see billing_service.send_payment_reminder's
+ * docstring). Available to front_desk too, not just billing_admin -- it
+ * doesn't mutate the invoice, only publishes a notification event. */
+export async function sendPaymentReminder(invoiceId: string): Promise<Invoice> {
+  const { data: wire } = await api.post<InvoiceWire>(`/api/v1/billing/invoices/${invoiceId}/send-reminder`, {});
+  return toInvoice(wire);
+}
+
 export async function markInvoicePaid(invoiceId: string): Promise<Invoice> {
   const { data: wire } = await api.patch<InvoiceWire>(`/api/v1/billing/invoices/${invoiceId}/mark-paid`, {});
   return toInvoice(wire);
@@ -262,4 +290,34 @@ export async function markInvoicePaid(invoiceId: string): Promise<Invoice> {
 export async function voidInvoice(invoiceId: string): Promise<Invoice> {
   const { data: wire } = await api.patch<InvoiceWire>(`/api/v1/billing/invoices/${invoiceId}/void`, {});
   return toInvoice(wire);
+}
+
+export interface ApplyInvoiceAdjustmentsData {
+  taxRatePercent: number | null;
+  discountAmount: number;
+}
+
+/** `PATCH /api/v1/billing/invoices/{id}/adjustments` -- HMS Project
+ * Completion Prompt gap fix: "tax and discount handling". Open-invoices
+ * only (backend 409s otherwise) -- `taxAmount`/`grandTotal` on the returned
+ * `Invoice` are server-computed, never sent. */
+export async function applyInvoiceAdjustments(
+  invoiceId: string,
+  data: ApplyInvoiceAdjustmentsData,
+): Promise<Invoice> {
+  const body = { tax_rate_percent: data.taxRatePercent, discount_amount: data.discountAmount };
+  const { data: wire } = await api.patch<InvoiceWire>(`/api/v1/billing/invoices/${invoiceId}/adjustments`, body);
+  return toInvoice(wire);
+}
+
+/** `GET /api/v1/billing/invoices/{id}/receipt` -- HMS Project Completion
+ * Prompt gap fix: "receipt generation". Returns the raw PDF bytes as a
+ * `Blob` (not JSON) -- `responseType: "blob"` is required so axios doesn't
+ * try to parse binary content as text/JSON. Callers turn this into a
+ * download via `URL.createObjectURL`. */
+export async function fetchInvoiceReceiptPdf(invoiceId: string): Promise<Blob> {
+  const { data } = await api.get<Blob>(`/api/v1/billing/invoices/${invoiceId}/receipt`, {
+    responseType: "blob",
+  });
+  return data;
 }

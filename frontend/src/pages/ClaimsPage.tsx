@@ -1,5 +1,8 @@
 import { useState } from "react";
 
+import BranchSelect from "../components/selects/BranchSelect";
+import ClaimSelect from "../components/selects/ClaimSelect";
+import { useAuth } from "../hooks/useAuth";
 import { setClaimState } from "../services/billingService";
 import type { ClaimState, InsuranceClaim } from "../types";
 import { extractErrorMessage } from "../utils/errors";
@@ -40,26 +43,34 @@ const LEGAL_NEXT_STATES: Record<ClaimState, ClaimState[]> = {
  * (no `front_desk` route registered for this page in `App.tsx`; claims
  * adjudication isn't a front-desk concern per the PRP's ENDPOINTS table).
  *
- * **Claim-lookup gap** (judgment call, documented per FRONTEND-AGENT
- * instructions): the PRP's ENDPOINTS table has no `GET /claims/{id}` --
- * the only claim-reading endpoint at all is embedded inside
- * `GET /invoices/{id}`'s response (`claim: InsuranceClaim | null`), which
- * takes an invoice ID, not a claim ID. Since this page is keyed by claim
- * ID with no lookup endpoint (same "no lookup, plain UUID text entry"
- * precedent `BedMatrixPage.tsx` uses for admission IDs), there is no way
- * to learn a claim's current state before the first transition attempt.
- * This page is honest about that: the "Current state" selector is the
- * caller's own manual best-knowledge entry (defaulting to `submitted`,
- * the state every claim starts in per `split_invoice`), used only to
- * compute which next-state buttons to display. Once a transition
- * succeeds, the selector snaps to the backend's authoritative returned
- * `state` and the full claim (payer/claim amount/copay/updated_at) is
- * shown below -- from then on the displayed state is fact, not a guess.
- * If the manual guess was wrong, the backend's 409 on an illegal
- * transition is the actual guard (defense in depth, not just the
- * button set) -- shown via `extractErrorMessage`.
+ * **Claim lookup** (frontend UUID-to-dropdown conversion follow-up):
+ * `GET /api/v1/billing/claims?branch_id=&state=` now backs a `<ClaimSelect>`
+ * here in place of the old raw-UUID text box. `branch_id` is a *required*
+ * query param at the router for every role, including `billing_admin` (see
+ * `billing_service.list_claims`'s docstring), but a `billing_admin`'s value
+ * is always their own assigned branch, so this page only ever shows a
+ * `<BranchSelect>` picker to `system_admin` -- same "implicit branch for
+ * non-admin, explicit picker for system_admin" pattern as `BedMatrixPage.tsx`
+ * -- and derives `effectiveBranchId` from `user.branchId` otherwise.
+ *
+ * Even with a proper lookup now, this page still can't know a claim's
+ * *current* state before selecting it (the list endpoint's `state` column IS
+ * shown per-option in the dropdown label, but there's no separate
+ * `GET /claims/{id}` for a fresh read right before acting) -- the "Current
+ * state" selector below remains the caller's own confirmation of what the
+ * dropdown just told them, defaulting to `submitted` only when nothing is
+ * selected yet. Once a transition succeeds, the selector snaps to the
+ * backend's authoritative returned `state` and the full claim
+ * (payer/claim amount/copay/updated_at) is shown below -- from then on the
+ * displayed state is fact, not a guess. The backend's 409 on an illegal
+ * transition remains the actual guard either way (defense in depth, not
+ * just the button set) -- shown via `extractErrorMessage`.
  */
 export default function ClaimsPage(): JSX.Element {
+  const { user } = useAuth();
+  const isSystemAdmin = user?.role === "system_admin";
+  const [branchId, setBranchId] = useState<string>("");
+  const effectiveBranchId = isSystemAdmin ? branchId : user?.branchId ?? "";
   const [claimId, setClaimId] = useState<string>("");
   const [currentState, setCurrentState] = useState<ClaimState>("submitted");
   const [hasConfirmedState, setHasConfirmedState] = useState<boolean>(false);
@@ -104,20 +115,24 @@ export default function ClaimsPage(): JSX.Element {
         <h2>Look up a claim</h2>
       </div>
       <div className="patient-form">
+        {isSystemAdmin && (
+          <>
+            <label className="auth-label" htmlFor="claim-branch-id">
+              Branch
+            </label>
+            <BranchSelect id="claim-branch-id" value={branchId} onChange={setBranchId} />
+          </>
+        )}
+
         <label className="auth-label" htmlFor="claim-id">
-          Claim ID (UUID)
+          Claim
         </label>
-        <input
+        <ClaimSelect
           id="claim-id"
-          className="auth-input"
-          type="text"
-          placeholder="00000000-0000-0000-0000-000000000000"
           value={claimId}
-          onChange={(event) => handleClaimIdChange(event.target.value)}
+          onChange={handleClaimIdChange}
+          branchId={effectiveBranchId}
         />
-        <p className="field-hint">
-          There is no claim-lookup endpoint in scope -- enter the claim&apos;s UUID directly.
-        </p>
 
         <label className="auth-label" htmlFor="claim-current-state">
           Current state

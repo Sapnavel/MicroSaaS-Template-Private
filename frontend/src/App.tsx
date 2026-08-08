@@ -5,6 +5,7 @@ import { AuthProvider } from "./context/AuthContext";
 import { useAuth } from "./hooks/useAuth";
 import type { Role } from "./types";
 import BedMatrixPage from "./pages/BedMatrixPage";
+import BookMyAppointmentPage from "./pages/BookMyAppointmentPage";
 import ClaimsPage from "./pages/ClaimsPage";
 import ConsultationPage from "./pages/ConsultationPage";
 import DuplicateReviewPage from "./pages/DuplicateReviewPage";
@@ -13,6 +14,14 @@ import InvoicePage from "./pages/InvoicePage";
 import LabOrderPage from "./pages/LabOrderPage";
 import LabWorklistPage from "./pages/LabWorklistPage";
 import LoginPage from "./pages/LoginPage";
+import MyAppointmentsPage from "./pages/MyAppointmentsPage";
+import MyBillDetailPage from "./pages/MyBillDetailPage";
+import MyBillsPage from "./pages/MyBillsPage";
+import MyConsultationDetailPage from "./pages/MyConsultationDetailPage";
+import MyConsultationsPage from "./pages/MyConsultationsPage";
+import MyLabOrdersPage from "./pages/MyLabOrdersPage";
+import MyProfilePage from "./pages/MyProfilePage";
+import MyTimelinePage from "./pages/MyTimelinePage";
 import NotificationHistoryPage from "./pages/NotificationHistoryPage";
 import OTSchedulePage from "./pages/OTSchedulePage";
 import PatientLoginPage from "./pages/PatientLoginPage";
@@ -23,6 +32,8 @@ import PharmacyInventoryPage from "./pages/PharmacyInventoryPage";
 import PrescriptionPage from "./pages/PrescriptionPage";
 import QueueBoardPage from "./pages/QueueBoardPage";
 import RegisterPage from "./pages/RegisterPage";
+import StartConsultationPage from "./pages/StartConsultationPage";
+import WaitlistPage from "./pages/WaitlistPage";
 
 /**
  * Module directory for the home route, filtered to the routes each role can
@@ -43,6 +54,54 @@ interface ModuleLink {
 }
 
 const MODULE_LINKS: ModuleLink[] = [
+  {
+    path: "/me/profile",
+    label: "My profile",
+    description: "Your contact details and clinical record.",
+    icon: "🙍",
+    category: "My Care",
+    roles: ["patient"],
+  },
+  {
+    path: "/me/timeline",
+    label: "My timeline",
+    description: "A combined view of your appointments, visits, and bills.",
+    icon: "🕒",
+    category: "My Care",
+    roles: ["patient"],
+  },
+  {
+    path: "/me/appointments",
+    label: "My appointments",
+    description: "Book, view, and cancel your appointments.",
+    icon: "📅",
+    category: "My Care",
+    roles: ["patient"],
+  },
+  {
+    path: "/me/consultations",
+    label: "My consultations",
+    description: "Past visits, diagnoses, and prescriptions.",
+    icon: "🩺",
+    category: "My Care",
+    roles: ["patient"],
+  },
+  {
+    path: "/me/lab-orders",
+    label: "My lab reports",
+    description: "Test results ordered by your doctor.",
+    icon: "🧪",
+    category: "My Care",
+    roles: ["patient"],
+  },
+  {
+    path: "/me/bills",
+    label: "My bills",
+    description: "Invoices and insurance claims.",
+    icon: "🧾",
+    category: "My Care",
+    roles: ["patient"],
+  },
   {
     path: "/patients/search",
     label: "Patient search",
@@ -72,6 +131,14 @@ const MODULE_LINKS: ModuleLink[] = [
     label: "Queue board",
     description: "Live check-in queue and digital token board.",
     icon: "🎫",
+    category: "Clinical",
+    roles: ["front_desk", "nurse", "doctor", "system_admin"],
+  },
+  {
+    path: "/waitlist",
+    label: "Waiting list",
+    description: "Patients waiting for a future slot to open up.",
+    icon: "⏳",
     category: "Clinical",
     roles: ["front_desk", "nurse", "doctor", "system_admin"],
   },
@@ -157,7 +224,7 @@ const MODULE_LINKS: ModuleLink[] = [
   },
 ];
 
-const MODULE_CATEGORY_ORDER = ["Patients", "Clinical", "Pharmacy", "Wards", "Billing", "Admin"];
+const MODULE_CATEGORY_ORDER = ["My Care", "Patients", "Clinical", "Pharmacy", "Wards", "Billing", "Admin"];
 
 function HomePage(): JSX.Element {
   const { user } = useAuth();
@@ -212,6 +279,82 @@ export default function App(): JSX.Element {
           <Route path="/patient/login" element={<PatientLoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/unauthorized" element={<UnauthorizedPage />} />
+          {/* Patient Self-Service Portal -- see services/patient_portal_service.py's
+              module docstring: every route here is patient-only, the mirror
+              image of every other route in this file (which gate staff
+              roles in and leave patient out). */}
+          <Route
+            path="/me/profile"
+            element={
+              <ProtectedRoute allowedRoles={["patient"]}>
+                <MyProfilePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/me/appointments"
+            element={
+              <ProtectedRoute allowedRoles={["patient"]}>
+                <MyAppointmentsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/me/appointments/new"
+            element={
+              <ProtectedRoute allowedRoles={["patient"]}>
+                <BookMyAppointmentPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/me/consultations"
+            element={
+              <ProtectedRoute allowedRoles={["patient"]}>
+                <MyConsultationsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/me/consultations/:id"
+            element={
+              <ProtectedRoute allowedRoles={["patient"]}>
+                <MyConsultationDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/me/lab-orders"
+            element={
+              <ProtectedRoute allowedRoles={["patient"]}>
+                <MyLabOrdersPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/me/bills"
+            element={
+              <ProtectedRoute allowedRoles={["patient"]}>
+                <MyBillsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/me/bills/:id"
+            element={
+              <ProtectedRoute allowedRoles={["patient"]}>
+                <MyBillDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/me/timeline"
+            element={
+              <ProtectedRoute allowedRoles={["patient"]}>
+                <MyTimelinePage />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/patients/search"
             element={
@@ -233,6 +376,21 @@ export default function App(): JSX.Element {
             element={
               <ProtectedRoute allowedRoles={["front_desk", "system_admin"]}>
                 <DuplicateReviewPage />
+              </ProtectedRoute>
+            }
+          />
+          {/* Entry point into the Consultation module -- previously
+              `consultationService.startConsultation` had no caller anywhere
+              in the frontend, so a Consultation was unreachable through the
+              UI even though its own route existed. Gated the same as
+              `POST /consultations` (doctor(own)/system_admin, see
+              consultation_service.start_consultation). Opened from
+              QueueBoardPage.tsx's "Consultation" link on a called-in token. */}
+          <Route
+            path="/consultations/new"
+            element={
+              <ProtectedRoute allowedRoles={["doctor", "system_admin"]}>
+                <StartConsultationPage />
               </ProtectedRoute>
             }
           />
@@ -313,6 +471,17 @@ export default function App(): JSX.Element {
             element={
               <ProtectedRoute allowedRoles={["front_desk", "nurse", "doctor", "system_admin"]}>
                 <QueueBoardPage />
+              </ProtectedRoute>
+            }
+          />
+          {/* Waiting list module -- see services/waitlist_service.py's
+              module docstring. Same role gate as the Queue Board, since
+              both are day-to-day front-of-house scheduling tools. */}
+          <Route
+            path="/waitlist"
+            element={
+              <ProtectedRoute allowedRoles={["front_desk", "nurse", "doctor", "system_admin"]}>
+                <WaitlistPage />
               </ProtectedRoute>
             }
           />

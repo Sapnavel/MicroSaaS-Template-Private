@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { Link } from "react-router-dom";
 
+import AuthBrandHeader from "../components/auth/AuthBrandHeader";
 import { useAuth } from "../hooks/useAuth";
 import { extractErrorMessage } from "../utils/errors";
 
@@ -37,6 +38,7 @@ export default function RegisterPage(): JSX.Element {
     return (
       <main className="auth-page">
         <div className="auth-form">
+          <AuthBrandHeader />
           <h1>Registration successful</h1>
           <p>You can now log in with your new account.</p>
           <p className="auth-footnote">
@@ -50,7 +52,9 @@ export default function RegisterPage(): JSX.Element {
   return (
     <main className="auth-page">
       <form className="auth-form" onSubmit={(event) => void handleSubmit(event)}>
+        <AuthBrandHeader />
         <h1>Patient Registration</h1>
+        <p className="auth-form-subtitle">Create your account to book and manage appointments.</p>
 
         {error !== null && (
           <p className="auth-error" role="alert">

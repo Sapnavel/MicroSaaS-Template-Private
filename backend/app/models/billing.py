@@ -122,6 +122,12 @@ class Invoice(Base, UUIDPrimaryKeyMixin):
     branch_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("branches.id"), nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default=InvoiceStatus.open.value)
     total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
+    # HMS Project Completion Prompt gap ("tax and discount handling") --
+    # see schema.sql's `invoices` DDL comment for the exact semantics
+    # (invoice-level, discount applied before tax, both default to a no-op
+    # so every pre-existing invoice is unaffected).
+    tax_rate_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True, default=None)
+    discount_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 

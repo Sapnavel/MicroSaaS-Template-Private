@@ -42,12 +42,16 @@ def test_list_branches_200_any_staff_role(client, front_desk_user, staff_passwor
     assert resp.json()[0]["name"]
 
 
-def test_list_branches_403_patient(client, patient_user, patient_password):
+def test_list_branches_200_patient(client, patient_user, patient_password, branch):
+    """`patient` is deliberately allowed here (unlike every other endpoint
+    in this router) -- see routers/directory.py's `_ANY_AUTHENTICATED_ROLE`:
+    a patient self-booking via `POST /api/v1/me/appointments` needs to pick
+    a branch first, and branch names carry no sensitivity."""
     token = _login(client, patient_user.email, patient_password, url="/auth/patient/login")
 
     resp = client.get("/api/v1/branches", headers=_auth(token))
 
-    assert resp.status_code == 403, resp.text
+    assert resp.status_code == 200, resp.text
 
 
 # ---------------------------------------------------------------------------
@@ -65,12 +69,14 @@ def test_list_specialties_200_any_staff_role(client, nurse_user, staff_password,
     assert specialty.id in ids
 
 
-def test_list_specialties_403_patient(client, patient_user, patient_password):
+def test_list_specialties_200_patient(client, patient_user, patient_password, specialty):
+    """Same reasoning as `test_list_branches_200_patient` above -- a patient
+    needs to narrow doctor search by specialty before booking."""
     token = _login(client, patient_user.email, patient_password, url="/auth/patient/login")
 
     resp = client.get("/api/v1/specialties", headers=_auth(token))
 
-    assert resp.status_code == 403, resp.text
+    assert resp.status_code == 200, resp.text
 
 
 # ---------------------------------------------------------------------------

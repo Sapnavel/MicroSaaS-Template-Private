@@ -360,6 +360,18 @@ def _nurse_reads_full_patient_record(user: User, patient: Any) -> bool:
     return True
 
 
+@policy("billing_admin", "patient", "read")
+def _billing_admin_reads_demographics_only(user: User, patient: Any) -> bool:
+    # HMS Project Completion Prompt gap: billing needs to look a patient up
+    # to bill them (InvoicePage.tsx's patient picker) but has no clinical
+    # need for allergies/national_id -- same demographics-only shape as
+    # front_desk, see `patient_service.shape_patient_response`. This policy
+    # only gates row-level access; the router is responsible for narrowing
+    # to `_SEARCH_ROLES` (not full `_READ_ROLES` -- billing_admin still
+    # can't create/merge/review patients).
+    return True
+
+
 @policy("system_admin", "*", "*")
 def _admin_bypass(user: User, resource: Any) -> bool:
     return True

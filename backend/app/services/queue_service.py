@@ -89,7 +89,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.security import authorize
-from app.models.appointment import Appointment
+from app.models.appointment import Appointment, AppointmentStatus
 from app.models.queue import QueueToken, TokenStatus
 from app.models.resource import Doctor
 from app.models.user import User
@@ -149,6 +149,7 @@ class QueueCheckInPayload:
     appointment_id: uuid.UUID | None = None
     branch_id: uuid.UUID | None = None
     department_id: int | None = None
+    is_priority: bool = False
 
 
 def _get_appointment_or_404(db: Session, appointment_id: uuid.UUID) -> Appointment:
@@ -172,10 +173,29 @@ async def check_in(db: Session, current_user: User, payload: QueueCheckInPayload
         appointment_id: uuid.UUID | None = appointment.id
         doctor = db.get(Doctor, appointment.doctor_id)
         department_id = doctor.specialty_id if doctor is not None else None
+        # HMS Project Completion Prompt gap ("emergency queue priority"):
+        # inherit the appointment's own `is_emergency` flag (set at booking
+        # time by emergency_engine.py) so a caller never has to remember to
+        # re-flag it here -- still OR-ed with an explicit caller override
+        # (payload.is_priority), never AND-ed, so this can only ever ADD
+        # priority, never silently drop it.
+        is_priority = payload.is_priority or appointment.is_emergency
+        # Advance the appointment's OWN status machine on physical check-in --
+        # without this, `Appointment.status` never leaves `booked` anywhere
+        # in the system (there is no separate "check in an appointment"
+        # endpoint), which made `consultation_service.start_consultation`'s
+        # `status == in_progress` precondition permanently unreachable
+        # through the real app. Only advances forward (`booked` -> checked_in),
+        # never regresses a status a different flow may have already moved
+        # past (e.g. re-check-in edge cases are out of scope here).
+        if appointment.status == AppointmentStatus.booked:
+            appointment.status = AppointmentStatus.checked_in
+            db.add(appointment)
     else:
         branch_id = payload.branch_id
         department_id = payload.department_id
         appointment_id = None
+        is_priority = payload.is_priority
 
     token = QueueToken(
         branch_id=branch_id,
@@ -183,6 +203,7 @@ async def check_in(db: Session, current_user: User, payload: QueueCheckInPayload
         department_id=department_id,
         token_number=0,  # placeholder -- computed below, before this row is added to the session
         status=TokenStatus.waiting,
+        is_priority=is_priority,
     )
 
     # authorize() before any mutation (no db.add/commit has happened yet) --
@@ -214,6 +235,7 @@ async def check_in(db: Session, current_user: User, payload: QueueCheckInPayload
                 "checked_in_at": token.checked_in_at.isoformat(),
                 "estimated_wait_minutes": token.estimated_wait_minutes,
                 "appointment_id": str(token.appointment_id) if token.appointment_id else None,
+                "is_priority": token.is_priority,
             },
         )
     # else: department_id is None -- no topic to broadcast to, see module
@@ -251,6 +273,20 @@ async def update_status(
         # the state machine can only ever be entered once per token, meaning
         # called_at is set exactly the first (and only) time.
         token.called_at = now
+        # Mirror the check_in()-time advance below: being "called in" is
+        # what makes `consultation_service.start_consultation`'s
+        # `status == in_progress` precondition true, so a doctor calling a
+        # patient in from the Queue Board is what actually unblocks starting
+        # the consultation. Walk-in tokens (appointment_id is None) have no
+        # appointment to advance.
+        if token.appointment_id is not None:
+            appointment = db.get(Appointment, token.appointment_id)
+            if appointment is not None and appointment.status in (
+                AppointmentStatus.booked,
+                AppointmentStatus.checked_in,
+            ):
+                appointment.status = AppointmentStatus.in_progress
+                db.add(appointment)
     elif new_status == TokenStatus.done:
         token.completed_at = now
 
@@ -272,6 +308,7 @@ async def update_status(
                 "completed_at": token.completed_at.isoformat() if token.completed_at else None,
                 "estimated_wait_minutes": token.estimated_wait_minutes,
                 "appointment_id": str(token.appointment_id) if token.appointment_id else None,
+                "is_priority": token.is_priority,
             },
         )
     # else: department_id is None -- see module docstring's edge-case note.
@@ -284,13 +321,17 @@ def list_queue(
 ) -> list[QueueToken]:
     """GET /api/v1/queue/board (Phase 2). Plain sync read, no broadcast --
     the live snapshot for initial page load before any WebSocket message has
-    fired. Ordered by `checked_in_at` (earliest-arrived first, i.e. queue
-    order)."""
+    fired. Ordered `is_priority DESC, checked_in_at ASC` -- HMS Project
+    Completion Prompt gap ("emergency queue priority"): priority tokens jump
+    the line ahead of every non-priority token regardless of arrival time,
+    but are still ordered fairly by arrival time AMONG each other (not, say,
+    most-recently-flagged-first), and non-priority tokens keep their
+    original earliest-arrived-first order below them."""
     authorize(current_user, "queue_token", "read", _BranchScoped(branch_id=branch_id))
 
     query = select(QueueToken).where(QueueToken.branch_id == branch_id)
     if department_id is not None:
         query = query.where(QueueToken.department_id == department_id)
-    query = query.order_by(QueueToken.checked_in_at)
+    query = query.order_by(QueueToken.is_priority.desc(), QueueToken.checked_in_at.asc())
 
     return list(db.execute(query).scalars().all())

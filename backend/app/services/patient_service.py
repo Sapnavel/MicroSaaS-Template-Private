@@ -135,7 +135,10 @@ def shape_patient_response(user: User, patient: Patient) -> PatientDemographics 
     registered for the caller's role (authorize() denies by default).
     """
     authorize(user, "patient", "read", patient)
-    if user.role == UserRole.front_desk:
+    # HMS Project Completion Prompt gap: `billing_admin` gets the same
+    # demographics-only shape as `front_desk` -- billing needs to find and
+    # identify a patient, not read allergies/national_id.
+    if user.role in (UserRole.front_desk, UserRole.billing_admin):
         return _to_demographics(patient)
     return _to_full_record(patient)
 
@@ -152,10 +155,18 @@ def _shape_duplicate_candidate(candidate: PatientDuplicateCandidate) -> Duplicat
     )
 
 
-def create_patient(db: Session, current_user: User, payload: PatientCreate) -> Patient:
+def create_patient(
+    db: Session, current_user: User, payload: PatientCreate, link_user_id: uuid.UUID | None = None
+) -> Patient:
     """Create a patient, running the deterministic dedup check first (see
     `DeterministicMatchConflict`) and the probabilistic scan right after
-    commit (see module docstring for why both run synchronously)."""
+    commit (see module docstring for why both run synchronously).
+
+    `link_user_id`: set only by `patient_portal_service.create_my_patient_record`
+    (self-registration) to stamp the new row's `Patient.user_id` -- see that
+    model column's docstring for why this link exists. `None` (the default)
+    for every staff-facing caller of this function, matching today's
+    behavior exactly."""
     # front_desk may create patients (and legitimately enters national_id/
     # address at intake, e.g. transcribing an insurance card) but can never
     # read allergies_note back (shape_patient_response strips it) and has no
@@ -206,6 +217,7 @@ def create_patient(db: Session, current_user: User, payload: PatientCreate) -> P
             allergies_note=payload.allergies_note,
             phone_hash=phone_hash,
             national_id_hash=national_id_hash,
+            user_id=link_user_id,
         )
         db.add(candidate_patient)
         try:

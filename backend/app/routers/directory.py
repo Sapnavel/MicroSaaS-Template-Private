@@ -43,11 +43,23 @@ router = APIRouter(prefix="/api/v1", tags=["directory"])
 
 _ANY_STAFF_ROLE = ("doctor", "nurse", "front_desk", "lab_tech", "pharmacist", "billing_admin", "system_admin")
 
+# `GET /branches`/`GET /specialties` are also reachable by role=patient
+# (unlike every other endpoint in this router): both are global,
+# non-sensitive reference data (branch/specialty names) with no
+# `authorize()` tenant-guard call at all (see directory_service.py's module
+# docstring), and a patient self-booking their own appointment via
+# `POST /api/v1/me/appointments` needs exactly this data to choose a branch/
+# specialty before searching doctors (`GET /api/v1/me/doctors`). Doctor/room/
+# staff/drug lookups stay staff-only: those either carry PII (staff) or are
+# only meaningful to someone already operating inside a specific branch's
+# clinical workflow.
+_ANY_AUTHENTICATED_ROLE = (*_ANY_STAFF_ROLE, "patient")
+
 
 @router.get("/branches")
 def list_branches(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(*_ANY_STAFF_ROLE)),
+    current_user: User = Depends(require_role(*_ANY_AUTHENTICATED_ROLE)),
 ) -> list[BranchListItem]:
     return directory_service.list_branches(db)
 
@@ -55,7 +67,7 @@ def list_branches(
 @router.get("/specialties")
 def list_specialties(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(*_ANY_STAFF_ROLE)),
+    current_user: User = Depends(require_role(*_ANY_AUTHENTICATED_ROLE)),
 ) -> list[SpecialtyListItem]:
     return directory_service.list_specialties(db)
 

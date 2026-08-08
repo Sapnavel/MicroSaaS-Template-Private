@@ -232,6 +232,17 @@ CREATE TYPE appointment_status AS ENUM (
     'cancelled', 'no_show', 'preempted'
 );
 
+CREATE TABLE appointment_series (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    branch_id       UUID NOT NULL REFERENCES branches(id),
+    patient_id      UUID NOT NULL REFERENCES patients(id),
+    doctor_id       UUID NOT NULL REFERENCES doctors(id),
+    frequency       TEXT NOT NULL CHECK (frequency IN ('daily', 'weekly', 'biweekly')),
+    occurrences     SMALLINT NOT NULL CHECK (occurrences BETWEEN 2 AND 52),
+    created_by      UUID NOT NULL REFERENCES users(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE appointments (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     branch_id       UUID NOT NULL REFERENCES branches(id),
@@ -245,6 +256,7 @@ CREATE TABLE appointments (
     no_show_risk_score NUMERIC(4,3),                -- 0..1, from predictive scoring
     preempted_by_appointment_id UUID REFERENCES appointments(id),
     reschedule_of_id UUID REFERENCES appointments(id), -- points to the appointment this one replaced
+    series_id       UUID REFERENCES appointment_series(id), -- NULL for a one-off booking
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -259,6 +271,29 @@ CREATE TABLE appointments (
 CREATE INDEX idx_appt_branch_time ON appointments USING gist (branch_id, time_range);
 CREATE INDEX idx_appt_patient ON appointments(patient_id);
 CREATE INDEX idx_appt_status ON appointments(status) WHERE status IN ('booked', 'checked_in');
+CREATE INDEX idx_appt_series ON appointments(series_id) WHERE series_id IS NOT NULL;
+
+-- Waiting list: distinct from the same-day walk-in queue (queue_tokens,
+-- section 6 below) -- this is a patient waiting for a FUTURE slot with a
+-- specific doctor to open up (e.g. every slot on their preferred date is
+-- full), not a patient physically present today. Fairness rule: FIFO by
+-- created_at within (doctor_id, requested_date) -- the oldest still-waiting
+-- entry is offered first when a slot frees up. See services/
+-- waitlist_service.py.
+CREATE TYPE waitlist_status AS ENUM ('waiting', 'offered', 'fulfilled', 'cancelled');
+
+CREATE TABLE appointment_waitlist_entries (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    branch_id       UUID NOT NULL REFERENCES branches(id),
+    patient_id      UUID NOT NULL REFERENCES patients(id),
+    doctor_id       UUID NOT NULL REFERENCES doctors(id),
+    requested_date  DATE NOT NULL,
+    status          waitlist_status NOT NULL DEFAULT 'waiting',
+    resolved_appointment_id UUID REFERENCES appointments(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_waitlist_doctor_date_waiting ON appointment_waitlist_entries(doctor_id, requested_date)
+    WHERE status = 'waiting';
 
 -- Room double-booking prevention (separate constraint: same table, different resource column).
 CREATE TABLE appointment_room_locks (
@@ -293,7 +328,14 @@ CREATE TABLE queue_tokens (
     checked_in_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     called_at       TIMESTAMPTZ,
     completed_at    TIMESTAMPTZ,
-    estimated_wait_minutes SMALLINT
+    estimated_wait_minutes SMALLINT,
+    -- HMS Project Completion Prompt gap ("emergency queue priority"): set
+    -- explicitly at check-in (walk-in) or inherited from the linked
+    -- appointment's `is_emergency` flag (see services/queue_service.py's
+    -- `check_in`) -- `list_queue` orders `is_priority DESC, checked_in_at
+    -- ASC`, so priority tokens jump the FIFO line but are still ordered
+    -- fairly among themselves by arrival time.
+    is_priority     BOOLEAN NOT NULL DEFAULT false
 );
 CREATE INDEX idx_queue_branch_dept_status ON queue_tokens(branch_id, department_id, status);
 
@@ -479,6 +521,15 @@ CREATE TABLE invoices (
     branch_id       UUID NOT NULL REFERENCES branches(id),
     status          TEXT NOT NULL DEFAULT 'open',  -- open, split, paid, void
     total_amount    NUMERIC(12,2) NOT NULL DEFAULT 0,
+    -- HMS Project Completion Prompt gap ("tax and discount handling"):
+    -- invoice-level, not per-item -- `tax_rate_percent` applies to
+    -- (total_amount - discount_amount), matching common real-world
+    -- ordering (discount first, then tax on the discounted subtotal).
+    -- Both default to zero/null so every pre-existing invoice (and every
+    -- invoice that never calls the new adjustments endpoint) computes a
+    -- grand_total identical to total_amount, unchanged.
+    tax_rate_percent    NUMERIC(5,2),
+    discount_amount     NUMERIC(12,2) NOT NULL DEFAULT 0,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     -- Added by BACKEND-AGENT, PRPs/billing-module-prp.md Phase 1: plain
     -- TEXT (matching `Prescription.status`'s convention, not a `CREATE
@@ -486,7 +537,10 @@ CREATE TABLE invoices (
     -- mirrors) still gets a DB-level CHECK as a cheap backstop, since this
     -- table holds financial state.
     CONSTRAINT invoices_status_valid CHECK (status IN ('open', 'split', 'paid', 'void')),
-    CONSTRAINT invoices_total_amount_non_negative CHECK (total_amount >= 0)
+    CONSTRAINT invoices_total_amount_non_negative CHECK (total_amount >= 0),
+    CONSTRAINT invoices_tax_rate_percent_range CHECK (tax_rate_percent IS NULL OR (tax_rate_percent >= 0 AND tax_rate_percent <= 100)),
+    CONSTRAINT invoices_discount_amount_non_negative CHECK (discount_amount >= 0),
+    CONSTRAINT invoices_discount_not_exceeding_total CHECK (discount_amount <= total_amount)
 );
 
 CREATE TABLE invoice_items (

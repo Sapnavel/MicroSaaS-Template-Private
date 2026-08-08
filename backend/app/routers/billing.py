@@ -13,7 +13,7 @@ of billing's exceptions carry extra structured fields the way Ward's
     SourceEventPatientMismatchError              -> 400
     InvalidInvoiceStateError / SourceEventNotChargeableError /
         DuplicateChargeError / IllegalClaimStateTransition -> 409
-    ClaimAmountMismatchError                     -> 422
+    ClaimAmountMismatchError / DiscountExceedsTotalError -> 422
 
 `front_desk` is read-only (checkout needs to see balance due, never
 mutates billing state) -- no `doctor`/`nurse`/`lab_tech`/`pharmacist` access
@@ -22,7 +22,7 @@ at all, per the PRP's ENDPOINTS table.
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.security import require_role
@@ -33,6 +33,7 @@ from app.schemas.billing import (
     ClaimListItemResponse,
     ClaimStateUpdate,
     InsuranceClaimResponse,
+    InvoiceAdjustmentsUpdate,
     InvoiceCreate,
     InvoiceDetailResponse,
     InvoiceItemCreate,
@@ -43,6 +44,7 @@ from app.services import billing_service
 from app.services.billing_engine import (
     ClaimAmountMismatchError,
     ClaimNotFoundError,
+    DiscountExceedsTotalError,
     DuplicateChargeError,
     IllegalClaimStateTransition,
     InvalidInvoiceStateError,
@@ -91,6 +93,21 @@ def get_invoice(
     return billing_service.get_invoice(db, current_user, invoice_id)
 
 
+@router.post("/invoices/{invoice_id}/send-reminder")
+def send_payment_reminder(
+    invoice_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(*_READ_ROLES)),
+) -> InvoiceResponse:
+    """HMS Project Completion Prompt gap: "Payment reminders" had no trigger
+    anywhere in the notification pipeline -- see billing_service.
+    send_payment_reminder's docstring for why this is staff-triggered, not
+    automatic. Gated the same as every other read on this router
+    (`_READ_ROLES`, includes front_desk): this doesn't mutate the invoice,
+    it publishes a notification event."""
+    return billing_service.send_payment_reminder(db, current_user, invoice_id)
+
+
 @router.get("/patients/{patient_id}/invoices")
 def list_patient_invoices(
     patient_id: uuid.UUID,
@@ -126,6 +143,41 @@ def add_invoice_item(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     except (InvalidInvoiceStateError, SourceEventNotChargeableError, DuplicateChargeError) as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.patch("/invoices/{invoice_id}/adjustments")
+def apply_invoice_adjustments(
+    invoice_id: uuid.UUID,
+    payload: InvoiceAdjustmentsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(*_WRITE_ROLES)),
+) -> InvoiceResponse:
+    """HMS Project Completion Prompt gap ("tax and discount handling")."""
+    try:
+        return billing_service.apply_invoice_adjustments(db, current_user, invoice_id, payload)
+    except InvoiceNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except InvalidInvoiceStateError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except DiscountExceedsTotalError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+
+
+@router.get("/invoices/{invoice_id}/receipt")
+def get_invoice_receipt(
+    invoice_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(*_READ_ROLES)),
+) -> Response:
+    """HMS Project Completion Prompt gap ("receipt generation"). Read-only,
+    same role gate as `get_invoice` -- a receipt is just a formatted view
+    of data the caller can already read."""
+    pdf_bytes = billing_service.generate_receipt_pdf(db, current_user, invoice_id)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="invoice-{invoice_id}.pdf"'},
+    )
 
 
 @router.post("/invoices/{invoice_id}/split")

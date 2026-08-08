@@ -90,12 +90,18 @@ class NoShowRateResponse(BaseModel):
     numerator and denominator entirely -- neither is a no-show nor a
     completed visit. `no_show_rate` is `0.0` when `total_considered == 0`.
 
-    `no_show_risk_score_note`: per the PRP's design decision #3,
-    `Appointment.no_show_risk_score` is written nowhere in this codebase
-    (no scoring service/heuristic/model exists to populate it) -- this
-    endpoint reports only the ACTUAL no-show rate, it does not and cannot
-    compare against that column's (always-NULL) predictions. This field
-    surfaces that reality plainly rather than silently omitting it."""
+    `avg_predicted_no_show_risk`: mean `Appointment.no_show_risk_score`
+    across the same `total_considered` rows -- HMS Project Completion Prompt
+    gap fix: `scheduling_engine.score_no_show_risk` now runs and persists a
+    score on every booking (`book_appointment`), where it previously had
+    zero callers and this column was NULL for every row. `None` when no row
+    in the window has a non-NULL score yet (a fresh deployment with only
+    pre-existing, unscored rows in this window).
+
+    `no_show_risk_score_note`: kept for continuity even now that scoring is
+    wired up -- explains what the average IS (a predicted-at-booking-time
+    heuristic) versus what `no_show_rate` IS (actual outcomes), so the two
+    numbers are never misread as the same thing."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -103,6 +109,7 @@ class NoShowRateResponse(BaseModel):
     total_considered: int
     no_show_count: int
     no_show_rate: float
+    avg_predicted_no_show_risk: float | None
     no_show_risk_score_note: str
 
 

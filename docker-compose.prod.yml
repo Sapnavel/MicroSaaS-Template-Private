@@ -1,0 +1,61 @@
+# Production override -- use alongside docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# `docker-compose.yml` alone is tuned for local development, where exposing
+# every service's port on the host is convenient (psql/redis-cli/RabbitMQ
+# management UI access from the host). On a public VPS, Postgres/Redis/
+# RabbitMQ having their default dev credentials (hms/hms, guest/guest)
+# reachable from the internet is a real vulnerability, not a theoretical
+# one -- this override binds them to localhost only (still reachable from
+# other containers via the compose network, and from the host itself via
+# `docker compose exec`/`psql -h 127.0.0.1`, just not from outside).
+#
+# Frontend and backend stay on their base-file ports (:3000 and :8000) --
+# this override does NOT claim host port 80/443. On a VPS that's already
+# running another reverse proxy (e.g. Traefik) bound to 80/443 for other
+# sites, claiming those ports here would either fail to bind or steal
+# traffic from those other apps. Reachable at `http://<host>:3000` until a
+# domain + reverse-proxy integration is set up -- see README.md's
+# "Deployment" section for the full picture.
+#
+# Also overrides Postgres's password (dev default `hms` -> a real generated
+# one, required via `POSTGRES_PASSWORD` -- set it in `.env` alongside the
+# usual JWT/HMAC/PHI keys) and `FRONTEND_ORIGIN` (CORS is `allow_origins`-
+# scoped to exactly this value -- must be the real public URL the frontend
+# is served from, not `localhost`, or every browser request gets a CORS
+# error). RabbitMQ keeps its `guest`/`guest` default -- acceptable ONLY
+# because this file also binds it to localhost, never exposed publicly;
+# change it too if that ever stops being true.
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a strong Postgres password, see .env.example}
+    # `!override` replaces the base file's `ports:` list instead of Compose's
+    # default merge-by-append behavior -- without it, this would ADD a
+    # localhost-only binding alongside the base file's 0.0.0.0 one rather
+    # than replacing it, leaving the port just as publicly reachable as
+    # before (silently defeating the entire point of this file).
+    ports: !override
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    ports: !override
+      - "127.0.0.1:6379:6379"
+
+  rabbitmq:
+    ports: !override
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+
+  backend:
+    environment:
+      DATABASE_URL: postgresql+psycopg2://hms:${POSTGRES_PASSWORD:?set a strong Postgres password, see .env.example}@postgres:5432/hms
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?set the public origin the frontend is served from, e.g. http://<vps-ip>:3000}
+
+  notification_worker:
+    environment:
+      DATABASE_URL: postgresql+psycopg2://hms:${POSTGRES_PASSWORD:?set a strong Postgres password, see .env.example}@postgres:5432/hms
+
+  queue_wait_time_worker:
+    environment:
+      DATABASE_URL: postgresql+psycopg2://hms:${POSTGRES_PASSWORD:?set a strong Postgres password, see .env.example}@postgres:5432/hms

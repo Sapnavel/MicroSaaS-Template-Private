@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import DrugSelect from "../components/selects/DrugSelect";
 import {
   createPrescription,
   getConsultation,
@@ -62,6 +63,9 @@ function FindingList({ findings }: { findings: SafetyFinding[] }): JSX.Element {
  *    reason, mirroring PatientRegisterPage's conflict/force-create UX.
  *  - Success: the full safety report (including INFO-tier findings) is
  *    shown so the prescriber sees what was checked, not just silent success.
+ *
+ * Each row's `drugId` is a `<DrugSelect>` in place of the old raw-UUID text
+ * box (frontend UUID-to-dropdown conversion follow-up).
  */
 export default function PrescriptionPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
@@ -231,16 +235,12 @@ export default function PrescriptionPage(): JSX.Element {
             <div className="prescription-item-row" key={index}>
               <div>
                 <label className="auth-label" htmlFor={`drug-id-${index}`}>
-                  Drug ID (UUID)
+                  Drug
                 </label>
-                <input
+                <DrugSelect
                   id={`drug-id-${index}`}
-                  className="auth-input"
-                  type="text"
-                  placeholder="00000000-0000-0000-0000-000000000000"
                   value={row.drugId}
-                  onChange={(event) => updateRow(index, "drugId", event.target.value)}
-                  required
+                  onChange={(value) => updateRow(index, "drugId", value)}
                 />
               </div>
               <div>
@@ -295,10 +295,6 @@ export default function PrescriptionPage(): JSX.Element {
               </button>
             </div>
           ))}
-          <p className="field-hint">
-            There is no drug-search/autocomplete endpoint in this PRP&apos;s scope -- enter the drug&apos;s UUID
-            directly (e.g. from the seed data list your BACKEND-AGENT documented).
-          </p>
 
           <p>
             <button className="button-secondary" type="button" onClick={addRow}>

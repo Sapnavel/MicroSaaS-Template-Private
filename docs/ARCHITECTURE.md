@@ -1,30 +1,48 @@
 # Hospital Management & Appointment Booking System — Architecture
 
 > Multi-tenant, real-time, HIPAA/GDPR-aware HMS. This document covers the system design;
-> `database/schema.sql` has the DDL; `backend/app/services/scheduling_engine.py` and
-> `emergency_engine.py` have the concrete concurrency-critical engine code.
+> `database/schema.sql` has the DDL (`docs/ER_DIAGRAM.md` has the diagram);
+> `backend/app/services/scheduling_engine.py` and `emergency_engine.py` have the concrete
+> concurrency-critical engine code.
 
 ---
 
 ## 1. Scope of this delivery
 
-Building all 10 modules to full production depth (billing/insurance state machines, ML
-no-show scoring, lab/pharmacy inventory, OT scheduling, notification fan-out, dashboards)
-is a multi-month effort. What's implemented **now**, at production-grade depth:
+All 10 modules are implemented end-to-end (schema → service → router → frontend page),
+not scaffolded — confirmed by a 642-test backend suite exercising real business logic
+against a real Postgres/Redis/RabbitMQ stack, not mocks. See `docs/ER_DIAGRAM.md` for the
+full schema (39 tables) and `README.md` for how to run it.
 
 - Full relational schema for all 10 modules (`database/schema.sql`)
-- Multi-tenancy, RBAC/ABAC, JWT auth, PHI field-level encryption, immutable audit log (foundation)
+- Multi-tenancy, RBAC/ABAC, JWT auth (rotating signing keys, Redis-backed revocation), PHI
+  field-level encryption, immutable hash-chained audit log
 - **Atomic tri-resource booking engine** (doctor + room + equipment) with distributed
   locking + DB-level exclusion constraints — the hardest correctness problem in the system
+  — plus rescheduling and real available-slot computation on top of it
 - **Emergency preemption algorithm** (Triage 1/2 auto-bumps + reschedule pipeline)
-- Live queue/token WebSocket broadcast
-- Docker Compose infra: Postgres, Redis, RabbitMQ, backend, frontend
+- Real-time queue/token WebSocket broadcast, with emergency/priority queue-jumping
+- Patient Master Index with deterministic + fuzzy (trigram) duplicate detection and a safe
+  merge workflow
+- Clinical consultation + prescription flow with a real drug-allergy/interaction safety
+  engine (DB-backed, tiered BLOCK/OVERRIDE_REQUIRED/INFO findings)
+- Lab order lifecycle (ordered → collected → processing → verified → attached)
+- Pharmacy FEFO (first-expired-first-out) dispensing with atomic stock deduction
+- Ward/bed/OT management with the same exclusion-constraint discipline as appointments
+- Billing: itemized invoices, tax/discount, insurance claim state machine, generated PDF
+  receipts (payment collection itself is a staff-confirmed manual status flip — see
+  `docs/PRESENTATION.md` section 10 for exactly what "simulated" means here)
+- Notification hub (RabbitMQ-backed, retryable) — SMS/email providers are a documented
+  logging stub pending real credentials, not a fake integration
+- Executive dashboard with real SQL aggregates (occupancy, wait times, revenue, no-show
+  rate, stock alerts)
+- A unified, cross-module patient timeline (appointments/consultations/labs/prescriptions/
+  admissions/invoices merged and sorted)
 
-Everything else (lab workflow, pharmacy FEFO inventory, ward/bed matrix, billing/insurance
-claims, notification hub, exec dashboards) is **scaffolded**: schema exists, router files
-exist with typed stubs and TODOs, so each module can be built out module-by-module using
-this repo's existing `/generate-prp` → `/execute-prp` workflow without re-architecting
-the foundation.
+Known, deliberately out-of-scope gaps (not silently missing — each is a documented
+decision): real payment gateway integration, real SMS/email provider credentials, medical
+scans/file uploads, a dedicated staff-facing appointment-reschedule UI (the API exists).
+See `docs/PRESENTATION.md` section 11 for the full future-scope list.
 
 ---
 
@@ -38,9 +56,9 @@ the foundation.
 | Distributed lock | Redis (Redlock algorithm) | Coordinates booking attempts *across API processes/pods* before they even reach the DB, so we fail fast under contention instead of stacking up DB row locks. Real Redlock needs ≥3 independent Redis masters in prod; scaffold here documents single-instance dev mode. |
 | Event bus | RabbitMQ (Kafka-compatible topology) | Async fan-out for: reschedule pipeline, notifications, multi-branch sync, audit stream. RabbitMQ chosen over Kafka for lower ops overhead at hospital-network scale (10s–100s of branches, not internet scale). Swap-in Kafka is straightforward since the engine only depends on a thin `EventPublisher` interface. |
 | Realtime | WebSockets (queue board) + SSE fallback | Live token/queue status per department |
-| Auth | JWT (access+refresh) + Google OAuth | Matches CLAUDE.md |
+| Auth | JWT (access+refresh), password-based | JWT is fully implemented (rotating signing keys, Redis-backed revocation). Google OAuth is **not** — `google_client_id`/`google_client_secret` exist as unused config settings only, no OAuth flow endpoint exists. Listed here as a documented gap, not overstated as built. |
 | PHI encryption | `cryptography` Fernet, SQLAlchemy `TypeDecorator` | Field-level, transparent at the ORM layer — encrypted at rest, decrypted only in-process for authorized reads |
-| Multi-branch sync | Postgres logical replication (cross-branch read replicas) + RabbitMQ event stream (cross-branch actions: transfers, emergency lookups) | Logical replication handles bulk data mirroring; the event bus handles low-latency cross-branch operational events (e.g. "Branch B needs to know Patient X was just triaged Level 1 at Branch A") |
+| Multi-branch data model | Single shared Postgres database, `branch_id` row-level tenancy | Every branch reads/writes the same database (see section 3) — this is what's actually built. Postgres logical replication for read-replica scaling and a dedicated low-latency cross-branch event stream (beyond the general RabbitMQ event bus already in place) are noted here as a plausible scaling path, not implemented infrastructure. |
 
 ---
 
@@ -117,9 +135,12 @@ push the bumped patient into an auto-reschedule pipeline. See
    been bumped — to avoid starving the same patient repeatedly).
 4. Transactionally: cancel/park the victim appointment as `preempted`, insert the emergency
    booking, publish `appointment.preempted` event.
-5. A consumer (`notification_service`, stubbed) listens for `appointment.preempted` and
-   runs the rebooking offer flow (next available slot, SMS/push notice) — decoupled from
-   the hot path so the ER doesn't wait on notification delivery.
+5. `notification_engine.py`'s `_handle_appointment_preempted` consumes the
+   `appointment.preempted` event (via the `notification_worker` RabbitMQ consumer) and
+   queues a rebooking-offer notification — decoupled from the hot path so the ER doesn't
+   wait on notification delivery. The notification is genuinely queued and tracked
+   (`queued`/`sent`/`failed` status, retryable); only the actual SMS/email *provider* is a
+   documented logging stub pending real credentials (see `README.md`'s "Known limitations").
 
 ---
 
@@ -127,9 +148,16 @@ push the bumped patient into an auto-reschedule pipeline. See
 
 Arrival check-in issues a `queue_tokens` row (`status: waiting`). Status transitions
 (`in_consultation`, `delayed`, `skipped`, `done`) are pushed over a WebSocket topic scoped
-per `(branch_id, department_id)`. Consultation-duration overruns trigger a recalculation of
-downstream estimated wait times (simple weighted-moving-average per doctor to start;
-swap-in point for the ML no-show/duration model later) and rebroadcast.
+per `(branch_id, department_id)`. Consultation-duration overruns publish a
+`queue.wait_time_updated` event per downstream appointment; a dedicated
+`queue_wait_time_worker` (RabbitMQ consumer, `backend/app/workers/queue_wait_time_consumer.py`)
+recomputes and rebroadcasts each affected token's estimate, decoupled from the request path
+that triggered it.
+
+A token's `is_priority` flag (set explicitly at check-in, or auto-inherited from a booked
+appointment's `is_emergency` flag) makes the live board sort priority-first, then
+earliest-checked-in-first within each group — an emergency patient jumps the line without
+losing fairness relative to other emergency patients who arrived earlier.
 
 ---
 
@@ -138,53 +166,55 @@ swap-in point for the ML no-show/duration model later) and rebroadcast.
 ```
 backend/
 ├── app/
-│   ├── main.py                  # FastAPI app, router registration, WS mount
+│   ├── main.py                  # FastAPI app, security-header + rate-limit middleware, router registration, WS mount
 │   ├── config.py                # Pydantic Settings (env-driven)
 │   ├── database.py              # engine, SessionLocal, get_db
 │   ├── core/
 │   │   ├── security.py          # JWT, get_current_user, RBAC/ABAC Policy engine
 │   │   ├── encryption.py        # PHI field-level encryption (TypeDecorator)
 │   │   ├── locking.py           # Redis Redlock distributed lock
+│   │   ├── rate_limit.py        # fixed-window rate limiting (login, patient search, global write)
 │   │   └── events.py            # RabbitMQ publisher/consumer interface
-│   ├── models/                  # SQLAlchemy models (all 10 modules)
+│   ├── models/                  # SQLAlchemy models, one file per module (13 files)
 │   ├── schemas/                 # Pydantic request/response schemas
-│   ├── services/
-│   │   ├── scheduling_engine.py # Atomic Resource Booking Engine (implemented)
-│   │   ├── emergency_engine.py  # Emergency Preemption Algorithm (implemented)
-│   │   └── notification_service.py  # stub
-│   ├── routers/                 # appointments, emergency implemented; rest stubbed
+│   ├── services/                # business logic -- 26 files, one (or a small family) per module;
+│   │                             # notable: scheduling_engine.py (booking/reschedule/available-slots),
+│   │                             # emergency_engine.py (preemption), patient_timeline_service.py
+│   ├── routers/                 # 17 routers -- thin: validation, role gating, status-code mapping only
+│   ├── workers/                 # notification_consumer.py, queue_wait_time_consumer.py (RabbitMQ consumers)
 │   └── websocket/
 │       └── queue_board.py       # live queue broadcast
+├── tests/                       # 642 tests (pytest, real Postgres+Redis+RabbitMQ, no mocks)
 ├── alembic/
 ├── requirements.txt
 └── Dockerfile
 
 frontend/
-└── src/{components,pages,hooks,services,context,types}/  # Vite skeleton, per CLAUDE.md conventions
+└── src/
+    ├── pages/                   # one page per route, ~50 pages across all 10 modules
+    ├── components/selects/      # reusable scoped dropdown/search-select components
+    ├── services/                # one file per backend module; the ONLY place each knows the wire format
+    ├── hooks/, context/, types/
 
 database/
-└── schema.sql                   # full DDL, all modules
+└── schema.sql                   # full DDL, all modules (authoritative -- see docs/ER_DIAGRAM.md)
 
 docs/
-└── ARCHITECTURE.md              # this file
+├── ARCHITECTURE.md              # this file
+├── ER_DIAGRAM.md                # full schema diagram + relationship notes
+├── DEMO_SCRIPT.md               # walkthrough script for a recorded demo
+└── PRESENTATION.md              # slide-deck source content
 
-docker-compose.yml               # postgres, redis, rabbitmq, backend, frontend
+docker-compose.yml               # postgres, redis, rabbitmq, backend, frontend, notification_worker, queue_wait_time_worker
 .env.example
 ```
 
 ---
 
-## 9. Build-out order (recommended next steps)
+## 9. Current module status
 
-Each module below can be built the same way this foundation was: define it in `INITIAL.md`
-module sections, then implement against the existing schema. Suggested order, by
-dependency and clinical-risk priority:
-
-1. Auth/RBAC endpoints (wire the stubbed `core/security.py` into `routers/auth.py`)
-2. Patient Master Index + dedup/merge workflow
-3. Clinical consultation + prescription engine (depends on patient + appointment)
-4. Lab + pharmacy (depends on consultation)
-5. Ward/bed/OT (independent; can parallel with 3-4)
-6. Billing/insurance (depends on 3-5 for chargeable events)
-7. Notification hub (cross-cutting; wire consumers as each module starts publishing events)
-8. Executive dashboard (depends on all of the above existing)
+Every module in section 1's list is implemented and tested. There is no "build-out order"
+left to plan — remaining work is either genuinely external (real payment/SMS/email
+provider credentials) or a deliberately deferred UI (e.g. a dedicated staff appointment
+list/reschedule page; the reschedule API itself exists and is tested). See
+`docs/PRESENTATION.md` section 11 for the complete, current future-scope list.

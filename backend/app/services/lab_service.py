@@ -42,6 +42,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.events import event_publisher
 from app.models.audit import record_audit_event
 from app.models.consultation import Consultation
 from app.models.lab import LabOrder, LabOrderStatus, LabSample
@@ -354,6 +355,21 @@ def transition_order(
             "a sample has already been collected for this order",
         ) from exc
     db.refresh(order)
+
+    # HMS Project Completion Prompt gap: notification-hub-prp.md's own
+    # module docstring names "Lab, Pharmacy, Ward, and Billing... never call
+    # event_publisher.publish(...) anywhere" as an explicit, on-purpose scope
+    # boundary at the time -- closing it here for lab reports specifically.
+    # Fired at `verified` (the transition that actually sets `sample.result`)
+    # rather than `attached` (a later filing step with no new information for
+    # the patient/doctor) -- see notification_engine.py's new
+    # `_handle_lab_report_ready` handler for the recipient resolution.
+    if requested == LabOrderStatus.verified:
+        event_publisher.publish(
+            "lab.report_ready",
+            {"lab_order_id": str(order.id), "patient_id": str(order.patient_id)},
+        )
+
     return order
 
 

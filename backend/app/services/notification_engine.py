@@ -11,21 +11,26 @@ exception. This mirrors why `ward_engine.py` splits its pure logic from its
 locking/transaction shell: keep the part worth unit-testing free of the
 part that needs a real broker connection to exercise at all.
 
-SCOPE-DEFINING FACT (read before adding a fifth entry casually): as of this
-PRP, exactly **four** event topics are ever actually published anywhere in
-this codebase — `appointment.booked`/`appointment.cancelled` and
-`queue.wait_time_updated` from `services/scheduling_engine.py`, and
-`appointment.booked`/`appointment.preempted` from
-`services/emergency_engine.py`. Lab, Pharmacy, Ward, and Billing (all four
-already built and shipped) never call `event_publisher.publish(...)`
-anywhere — retrofitting that into four already-reviewed, already-settled
-modules is explicitly out of scope for this PRP (see the PRP's module
-overview for the full reasoning). `_TOPIC_HANDLERS` is therefore built
-generically enough that a fifth module publishing a fifth topic later is a
-one-entry registry addition, not an architecture change — but that entry
-does not exist yet, on purpose, and an unrecognized topic reaching
-`handle_event` is NOT an error: it's logged at `warning` and `None` is
-returned, because there is deliberately nothing wired up for it yet.
+SCOPE NOTE (updated -- HMS Project Completion Prompt gap-closing pass): at
+the notification-hub-prp.md Phase 1 baseline, exactly **four** event topics
+were published anywhere in this codebase — `appointment.booked`/
+`appointment.cancelled`/`queue.wait_time_updated` from
+`services/scheduling_engine.py`, and `appointment.booked`/
+`appointment.preempted` from `services/emergency_engine.py`. Lab and Billing
+were an explicit, on-purpose scope boundary at the time ("never call
+event_publisher.publish(...) anywhere... explicitly out of scope for this
+PRP"). Two more topics have since been wired to close that gap:
+`lab.report_ready` (`services/lab_service.py`'s `transition_order`, fired at
+the `verified` transition) and `billing.payment_reminder`
+(`services/billing_service.py`'s `send_payment_reminder`, staff-triggered --
+see that function's docstring for why this one isn't automatic). Ward and
+Pharmacy remain unwired: neither has an event with an obvious
+patient-facing notification need (a bed status flip or a stock receipt
+isn't something a patient is notified about) -- `_TOPIC_HANDLERS` stays
+built generically enough that adding either later is a one-entry registry
+addition, not an architecture change. An unrecognized topic reaching
+`handle_event` is still NOT an error: it's logged at `warning` and `None`
+is returned.
 """
 
 import logging
@@ -125,6 +130,38 @@ def _handle_appointment_preempted(db: Session, payload: dict) -> _ResolvedRecipi
     )
 
 
+def _handle_lab_report_ready(db: Session, payload: dict) -> _ResolvedRecipient:
+    """`lab_service.transition_order` publishes `patient_id` directly (the
+    `LabOrder.patient_id` FK is a real column, no lookup needed) but no
+    `branch_id` -- `lab_orders` has no `branch_id` column of its own (see
+    models/lab.py) and its owning `Consultation` has none either (see
+    consultation_service.py's module docstring), so there is genuinely no
+    branch to resolve here. `branch_id=None` is exactly the documented,
+    intentional case `Notification.branch_id`'s own docstring calls out
+    ("a future topic that genuinely can't resolve a branch should get a
+    NULL row, not a crash"), not a shortcut."""
+    return _ResolvedRecipient(
+        user_id=None,
+        patient_id=_uuid(payload["patient_id"]),
+        branch_id=None,
+        channel="sms",
+        template="lab_report_ready",
+    )
+
+
+def _handle_payment_reminder(db: Session, payload: dict) -> _ResolvedRecipient:
+    """`billing_service.send_payment_reminder` publishes `patient_id`/
+    `branch_id` directly (`Invoice.branch_id` is a real column) -- no
+    lookup needed, same shape as `_handle_appointment_booked`."""
+    return _ResolvedRecipient(
+        user_id=None,
+        patient_id=_uuid(payload["patient_id"]),
+        branch_id=_uuid(payload["branch_id"]),
+        channel="email",
+        template="payment_reminder",
+    )
+
+
 def _handle_wait_time_updated(db: Session, payload: dict) -> _ResolvedRecipient:
     """`scheduling_engine.recalculate_downstream_wait_times` only publishes
     `appointment_id`/`doctor_id` — `patient_id`/`branch_id` come from an
@@ -144,6 +181,8 @@ _TOPIC_HANDLERS: dict[str, Callable[[Session, dict], _ResolvedRecipient]] = {
     "appointment.cancelled": _handle_appointment_cancelled,
     "appointment.preempted": _handle_appointment_preempted,
     "queue.wait_time_updated": _handle_wait_time_updated,
+    "lab.report_ready": _handle_lab_report_ready,
+    "billing.payment_reminder": _handle_payment_reminder,
 }
 
 

@@ -1,7 +1,8 @@
 import enum
 import uuid
+from datetime import date, datetime
 
-from sqlalchemy import Enum, ForeignKey, Numeric, SmallInteger
+from sqlalchemy import Date, DateTime, Enum, ForeignKey, Numeric, SmallInteger, String, func
 from sqlalchemy.dialects.postgresql import TSTZRANGE, UUID, ExcludeConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -17,6 +18,64 @@ class AppointmentStatus(str, enum.Enum):
     cancelled = "cancelled"
     no_show = "no_show"
     preempted = "preempted"
+
+
+class RecurrenceFrequency(str, enum.Enum):
+    daily = "daily"
+    weekly = "weekly"
+    biweekly = "biweekly"
+
+
+class WaitlistStatus(str, enum.Enum):
+    waiting = "waiting"
+    offered = "offered"
+    fulfilled = "fulfilled"
+    cancelled = "cancelled"
+
+
+class AppointmentSeries(Base, UUIDPrimaryKeyMixin):
+    """A recurring-appointment request (HMS Project Completion Prompt,
+    "Repeat or recurring appointments"). Each occurrence is booked as its
+    own independent `Appointment` row (`Appointment.series_id` links back
+    here) through the exact same `scheduling_engine.book_appointment` path
+    every one-off booking uses -- there is no separate, weaker conflict-
+    check code path for recurring bookings. See
+    `services/recurring_appointment_service.py`."""
+
+    __tablename__ = "appointment_series"
+
+    branch_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("branches.id"), nullable=False)
+    patient_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False)
+    doctor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("doctors.id"), nullable=False)
+    frequency: Mapped[str] = mapped_column(String, nullable=False)
+    occurrences: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class WaitlistEntry(Base, UUIDPrimaryKeyMixin):
+    """A patient waiting for a FUTURE slot with a specific doctor to open up
+    on a given date -- distinct from `QueueToken` (models/queue.py), which
+    is a patient physically checked in today. Fairness rule: FIFO by
+    `created_at` within `(doctor_id, requested_date)` -- see
+    `services/waitlist_service.py`'s module docstring for the full
+    allocation algorithm."""
+
+    __tablename__ = "appointment_waitlist_entries"
+
+    branch_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("branches.id"), nullable=False)
+    patient_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False)
+    doctor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("doctors.id"), nullable=False)
+    requested_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[WaitlistStatus] = mapped_column(
+        Enum(WaitlistStatus, name="waitlist_status"),
+        nullable=False,
+        default=WaitlistStatus.waiting,
+    )
+    resolved_appointment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("appointments.id")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class Appointment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -56,6 +115,7 @@ class Appointment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("appointments.id")
     )
     reschedule_of_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("appointments.id"))
+    series_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("appointment_series.id"))
 
 
 class AppointmentRoomLock(Base):

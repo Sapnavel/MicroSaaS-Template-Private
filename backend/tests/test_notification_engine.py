@@ -137,6 +137,42 @@ def test_queue_wait_time_updated_resolves_via_appointment_lookup(db, in_progress
     assert notification.status == "sent"
 
 
+def test_lab_report_ready_resolves_patient_directly_no_branch(db, patient):
+    """`_handle_lab_report_ready`: `lab_service.transition_order` publishes
+    `patient_id` directly (real FK column) -- no lookup needed. `branch_id`
+    is `None` (lab_orders/consultations have no branch_id column at all,
+    see that handler's docstring), which the `Notification.branch_id`
+    column accepts (nullable by design for exactly this case)."""
+    payload = {"lab_order_id": str(uuid.uuid4()), "patient_id": str(patient.id)}
+
+    notification = handle_event(db, topic="lab.report_ready", payload=payload)
+
+    assert notification is not None
+    assert notification.channel == "sms"
+    assert notification.template == "lab_report_ready"
+    assert notification.patient_id == patient.id
+    assert notification.branch_id is None
+    assert notification.user_id is None
+    assert notification.status == "sent"
+
+
+def test_payment_reminder_resolves_patient_and_branch_directly(db, branch, patient):
+    """`_handle_payment_reminder`: `billing_service.send_payment_reminder`
+    publishes `patient_id`/`branch_id` directly (`Invoice.branch_id` is a
+    real column) -- no lookup needed, same shape as `appointment.booked`."""
+    payload = {"invoice_id": str(uuid.uuid4()), "patient_id": str(patient.id), "branch_id": str(branch.id)}
+
+    notification = handle_event(db, topic="billing.payment_reminder", payload=payload)
+
+    assert notification is not None
+    assert notification.channel == "email"
+    assert notification.template == "payment_reminder"
+    assert notification.patient_id == patient.id
+    assert notification.branch_id == branch.id
+    assert notification.user_id is None
+    assert notification.status == "sent"
+
+
 # COVERAGE GAP (noted, not invented around): every one of the four current
 # `_TOPIC_HANDLERS` entries resolves `patient_id` and leaves `user_id` unset
 # (see each handler above -- `user_id=None` in every `_ResolvedRecipient`).

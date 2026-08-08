@@ -20,7 +20,16 @@ export default function NavBar(): JSX.Element {
   return (
     <header className="navbar">
       <Link to="/" className="navbar-brand">
-        HMS
+        <span className="brand-lockup">
+          <span className="brand-icon" aria-hidden="true">
+            H
+          </span>
+          <span>
+            <span className="brand-name">HMS</span>
+            <br />
+            <span className="brand-subtitle">Hospital Management System</span>
+          </span>
+        </span>
       </Link>
       {user !== null && (
         <div className="navbar-user">

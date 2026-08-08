@@ -32,7 +32,7 @@ consultations".
 
 import uuid
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -97,13 +97,29 @@ def _finding_response_dict(finding: SafetyFinding) -> dict[str, object]:
 
 @router.get("")
 def list_consultations(
-    patient_id: uuid.UUID,
+    patient_id: uuid.UUID | None = None,
+    appointment_id: uuid.UUID | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(*_DOCTOR_ADMIN)),
 ) -> list[ConsultationListItemResponse]:
     """GET /api/v1/consultations?patient_id= (frontend UUID-to-dropdown
     conversion follow-up, backend phase). Matches LabOrderPage's
-    `/lab/orders/new` route gate (doctor + system_admin, see App.tsx)."""
+    `/lab/orders/new` route gate (doctor + system_admin, see App.tsx).
+
+    `?appointment_id=` is a second, mutually exclusive filter added for the
+    Queue Board -> Consultation click-path: `Consultation.appointment_id` is
+    UNIQUE (models/consultation.py), so this returns 0 or 1 rows -- it's how
+    the frontend tells "no consultation started yet for this appointment"
+    (empty list) apart from "one already exists" (one row, whose `id` it
+    then navigates straight to) without needing a separate 404-shaped
+    endpoint for the same lookup."""
+    if (patient_id is None) == (appointment_id is None):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "exactly one of patient_id or appointment_id is required",
+        )
+    if appointment_id is not None:
+        return consultation_service.list_consultations_for_appointment(db, current_user, appointment_id)
     return consultation_service.list_consultations_for_patient(db, current_user, patient_id)
 
 

@@ -1,6 +1,10 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 
+import BranchSelect from "../components/selects/BranchSelect";
+import DoctorSelect from "../components/selects/DoctorSelect";
+import PatientSearchSelect from "../components/selects/PatientSearchSelect";
+import RoomSelect from "../components/selects/RoomSelect";
 import { useAuth } from "../hooks/useAuth";
 import {
   listOTSchedules,
@@ -59,13 +63,18 @@ function conflictMessage(reason: OTConflictReason): string {
 
 /**
  * OT scheduling -- see PRPs/ward-bed-ot-module-prp.md "ENDPOINTS" /
- * "FILES TO CREATE". `room_id`/`patient_id`/`surgeon_id` are plain UUID
- * text inputs (no lookup/autocomplete endpoint exists for any of them),
- * the same "no lookup, plain UUID text entry" pattern already established
- * for `drug_id` in the Pharmacy/Prescription pages. The existing-schedule
- * view is a plain list ordered by `startTime` (client-side sorted, since
- * the contract doesn't guarantee server ordering) rather than an actual
- * calendar widget -- the PRP explicitly says a calendar isn't required.
+ * "FILES TO CREATE". `room_id`/`surgeon_id` are now `<RoomSelect>`/
+ * `<DoctorSelect>` dropdowns and `patient_id` a `<PatientSearchSelect>`
+ * (frontend UUID-to-dropdown conversion follow-up) -- both `RoomSelect` and
+ * `DoctorSelect` require a `branch_id` to query, so this page now also
+ * carries a `branchId` scope, mirroring the "implicit branch for
+ * non-admin, explicit `<BranchSelect>` picker for `system_admin`" pattern
+ * `BedMatrixPage.tsx` established, shared by both the create form and the
+ * existing-schedule filters (one branch scope for the whole page, not two
+ * independent ones). The existing-schedule view is a plain list ordered by
+ * `startTime` (client-side sorted, since the contract doesn't guarantee
+ * server ordering) rather than an actual calendar widget -- the PRP
+ * explicitly says a calendar isn't required.
  *
  * Role gating: the create form is only rendered for `doctor`/
  * `system_admin` (a `nurse` reaching this page via
@@ -81,7 +90,11 @@ function conflictMessage(reason: OTConflictReason): string {
  */
 export default function OTSchedulePage(): JSX.Element {
   const { user } = useAuth();
-  const canSchedule = user?.role === "doctor" || user?.role === "system_admin";
+  const isSystemAdmin = user?.role === "system_admin";
+  const canSchedule = user?.role === "doctor" || isSystemAdmin;
+
+  const [branchId, setBranchId] = useState<string>("");
+  const effectiveBranchId = isSystemAdmin ? branchId : user?.branchId ?? "";
 
   const [form, setForm] = useState<ScheduleFormState>(emptyScheduleForm);
   const [formError, setFormError] = useState<string | null>(null);
@@ -160,6 +173,20 @@ export default function OTSchedulePage(): JSX.Element {
     <main className="page-container">
       <h1>OT schedule</h1>
 
+      {isSystemAdmin && (
+        <>
+          <div className="section-header">
+            <h2>Branch</h2>
+          </div>
+          <div className="patient-form">
+            <label className="auth-label" htmlFor="ot-branch-id">
+              Branch
+            </label>
+            <BranchSelect id="ot-branch-id" value={branchId} onChange={setBranchId} />
+          </div>
+        </>
+      )}
+
       {canSchedule && (
         <>
           <div className="section-header">
@@ -188,41 +215,33 @@ export default function OTSchedulePage(): JSX.Element {
             )}
 
             <label className="auth-label" htmlFor="ot-room-id">
-              Room ID (UUID)
+              Room
             </label>
-            <input
+            <RoomSelect
               id="ot-room-id"
-              className="auth-input"
-              type="text"
-              placeholder="00000000-0000-0000-0000-000000000000"
               value={form.roomId}
-              onChange={(event) => setForm((previous) => ({ ...previous, roomId: event.target.value }))}
+              onChange={(value) => setForm((previous) => ({ ...previous, roomId: value }))}
+              branchId={effectiveBranchId}
               required
             />
 
             <label className="auth-label" htmlFor="ot-patient-id">
-              Patient ID (UUID)
+              Patient
             </label>
-            <input
+            <PatientSearchSelect
               id="ot-patient-id"
-              className="auth-input"
-              type="text"
-              placeholder="00000000-0000-0000-0000-000000000000"
               value={form.patientId}
-              onChange={(event) => setForm((previous) => ({ ...previous, patientId: event.target.value }))}
-              required
+              onChange={(value) => setForm((previous) => ({ ...previous, patientId: value }))}
             />
 
             <label className="auth-label" htmlFor="ot-surgeon-id">
-              Surgeon ID (UUID)
+              Surgeon
             </label>
-            <input
+            <DoctorSelect
               id="ot-surgeon-id"
-              className="auth-input"
-              type="text"
-              placeholder="00000000-0000-0000-0000-000000000000"
               value={form.surgeonId}
-              onChange={(event) => setForm((previous) => ({ ...previous, surgeonId: event.target.value }))}
+              onChange={(value) => setForm((previous) => ({ ...previous, surgeonId: value }))}
+              branchId={effectiveBranchId}
               required
             />
 
@@ -265,24 +284,22 @@ export default function OTSchedulePage(): JSX.Element {
       </div>
       <div className="patient-form">
         <label className="auth-label" htmlFor="ot-filter-room">
-          Room ID (optional)
+          Room (optional)
         </label>
-        <input
+        <RoomSelect
           id="ot-filter-room"
-          className="auth-input"
-          type="text"
           value={filters.roomId}
-          onChange={(event) => setFilters((previous) => ({ ...previous, roomId: event.target.value }))}
+          onChange={(value) => setFilters((previous) => ({ ...previous, roomId: value }))}
+          branchId={effectiveBranchId}
         />
         <label className="auth-label" htmlFor="ot-filter-surgeon">
-          Surgeon ID (optional)
+          Surgeon (optional)
         </label>
-        <input
+        <DoctorSelect
           id="ot-filter-surgeon"
-          className="auth-input"
-          type="text"
           value={filters.surgeonId}
-          onChange={(event) => setFilters((previous) => ({ ...previous, surgeonId: event.target.value }))}
+          onChange={(value) => setFilters((previous) => ({ ...previous, surgeonId: value }))}
+          branchId={effectiveBranchId}
         />
         <label className="auth-label" htmlFor="ot-filter-from">
           From (optional)

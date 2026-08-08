@@ -29,6 +29,7 @@ interface QueueTokenWire {
   called_at: string | null;
   completed_at: string | null;
   estimated_wait_minutes: number | null;
+  is_priority: boolean;
 }
 
 function toQueueToken(wire: QueueTokenWire): QueueToken {
@@ -43,26 +44,42 @@ function toQueueToken(wire: QueueTokenWire): QueueToken {
     calledAt: wire.called_at,
     completedAt: wire.completed_at,
     estimatedWaitMinutes: wire.estimated_wait_minutes,
+    isPriority: wire.is_priority,
   };
 }
 
 /** `POST /api/v1/queue/check-in` with `{appointment_id}` -- branch/department
  * are derived server-side from the appointment, never supplied here (see
- * design decision #1). */
-export async function checkInWithAppointment(appointmentId: string): Promise<QueueToken> {
+ * design decision #1). `isPriority` (HMS Project Completion Prompt gap,
+ * "emergency queue priority") is OR-ed server-side with the appointment's
+ * own `is_emergency` flag -- pass `true` here to mark priority even when
+ * the appointment itself wasn't booked as an emergency (e.g. the patient's
+ * condition worsened after arrival); omit/`false` otherwise, an
+ * emergency-booked appointment still gets priority automatically. */
+export async function checkInWithAppointment(
+  appointmentId: string,
+  isPriority: boolean = false,
+): Promise<QueueToken> {
   const { data: wire } = await api.post<QueueTokenWire>("/api/v1/queue/check-in", {
     appointment_id: appointmentId,
+    is_priority: isPriority,
   });
   return toQueueToken(wire);
 }
 
 /** `POST /api/v1/queue/check-in` with `{branch_id, department_id}` -- a
  * walk-in token with no appointment (and therefore no patient) linkage. See
- * design decision #1's "real, schema-imposed limitation" note. */
-export async function checkInWalkIn(branchId: string, departmentId: number): Promise<QueueToken> {
+ * design decision #1's "real, schema-imposed limitation" note. `isPriority`
+ * -- see `checkInWithAppointment`'s docstring. */
+export async function checkInWalkIn(
+  branchId: string,
+  departmentId: number,
+  isPriority: boolean = false,
+): Promise<QueueToken> {
   const { data: wire } = await api.post<QueueTokenWire>("/api/v1/queue/check-in", {
     branch_id: branchId,
     department_id: departmentId,
+    is_priority: isPriority,
   });
   return toQueueToken(wire);
 }
@@ -107,6 +124,7 @@ interface QueueBoardUpdateWire {
   completed_at: string | null;
   estimated_wait_minutes: number | null;
   appointment_id: string | null;
+  is_priority: boolean;
 }
 
 function toQueueBoardUpdate(wire: QueueBoardUpdateWire): QueueBoardUpdate {
@@ -119,6 +137,7 @@ function toQueueBoardUpdate(wire: QueueBoardUpdateWire): QueueBoardUpdate {
     completedAt: wire.completed_at,
     estimatedWaitMinutes: wire.estimated_wait_minutes,
     appointmentId: wire.appointment_id,
+    isPriority: wire.is_priority,
   };
 }
 

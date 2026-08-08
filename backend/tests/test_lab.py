@@ -601,3 +601,35 @@ def test_transition_repeat_collect_second_attempt_is_409(
         select(LabSample).where(LabSample.lab_order_id == uuid.UUID(order["id"]))
     ).scalars().all()
     assert len(samples) == 1, "at most one sample per order must be enforced"
+
+
+def test_verify_transition_publishes_lab_report_ready_event(
+    monkeypatch, client, staff_user, staff_password, lab_tech_user, consultation, patient
+):
+    """HMS Project Completion Prompt gap: `lab.report_ready` had no
+    publisher anywhere -- must fire exactly once, at the `verified`
+    transition specifically (not `collected`/`processing`/`attached`),
+    with `patient_id` matching the order's own patient."""
+    from app.services import lab_service
+
+    published: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        lab_service.event_publisher, "publish", lambda topic, payload: published.append((topic, payload))
+    )
+
+    doctor_token = _login(client, staff_user.email, staff_password)
+    order = _create_order(client, doctor_token, consultation.id)
+    lab_tech_token = _login(client, lab_tech_user.email, staff_password)
+
+    assert _transition(client, lab_tech_token, order["id"], "collected").status_code == 200
+    assert published == []  # not yet -- only the verify transition fires this
+
+    assert _transition(client, lab_tech_token, order["id"], "processing").status_code == 200
+    assert published == []
+
+    verify_resp = _transition(client, lab_tech_token, order["id"], "verified", result="all clear")
+    assert verify_resp.status_code == 200, verify_resp.text
+    assert published == [("lab.report_ready", {"lab_order_id": order["id"], "patient_id": str(patient.id)})]
+
+    assert _transition(client, lab_tech_token, order["id"], "attached").status_code == 200
+    assert len(published) == 1  # still just the one event from the verify step

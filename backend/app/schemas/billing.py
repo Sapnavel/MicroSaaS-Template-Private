@@ -14,10 +14,10 @@ pricing field to "helpfully" pre-fill one.
 
 import uuid
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 # --- Requests ----------------------------------------------------------------
 
@@ -58,6 +58,20 @@ class InvoiceSplitCreate(BaseModel):
     patient_copay: Decimal = Field(ge=0)
 
 
+class InvoiceAdjustmentsUpdate(BaseModel):
+    """PATCH /api/v1/billing/invoices/{id}/adjustments body. HMS Project
+    Completion Prompt gap ("tax and discount handling") --
+    `billing_engine.apply_invoice_adjustments` is the actual authority on
+    `discount_amount <= invoice.total_amount` (422 on violation) and on
+    `status == "open"` (409 otherwise); the `Field` bounds here only rule
+    out obviously-invalid wire values."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tax_rate_percent: Decimal | None = Field(default=None, ge=0, le=100)
+    discount_amount: Decimal = Field(default=Decimal("0"), ge=0)
+
+
 class ClaimStateUpdate(BaseModel):
     """PATCH /api/v1/billing/claims/{id}/state body. The `Literal` here is
     the full `ClaimState` enum's value set -- `billing_engine.set_claim_state`
@@ -75,7 +89,16 @@ class ClaimStateUpdate(BaseModel):
 
 class InvoiceResponse(BaseModel):
     """Shared shape returned by every invoice-mutating endpoint and embedded
-    in `InvoiceDetailResponse`."""
+    in `InvoiceDetailResponse`.
+
+    `tax_amount`/`grand_total` are `@computed_field`s, NOT stored columns --
+    see `billing_engine.apply_invoice_adjustments`'s docstring for why
+    `grand_total` is deliberately never cached. Both are computed off
+    `total_amount` (the itemized subtotal `billing_engine` maintains,
+    unaffected by tax/discount -- `split_invoice`'s `claim_amount +
+    patient_copay == total_amount` check is intentionally untouched by this
+    HMS Project Completion Prompt addition, since insurance splits the
+    clinical subtotal, not a tax-inclusive total)."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -84,7 +107,24 @@ class InvoiceResponse(BaseModel):
     branch_id: uuid.UUID
     status: str
     total_amount: Decimal
+    tax_rate_percent: Decimal | None = None
+    discount_amount: Decimal = Decimal("0")
     created_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def tax_amount(self) -> Decimal:
+        discounted_subtotal = self.total_amount - self.discount_amount
+        if self.tax_rate_percent is None:
+            return Decimal("0.00")
+        return (discounted_subtotal * self.tax_rate_percent / Decimal("100")).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def grand_total(self) -> Decimal:
+        return self.total_amount - self.discount_amount + self.tax_amount
 
 
 class InvoiceItemResponse(BaseModel):

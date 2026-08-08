@@ -27,7 +27,11 @@ from app.models.appointment import (  # noqa: F401
     Appointment,
     AppointmentEquipmentLock,
     AppointmentRoomLock,
+    AppointmentSeries,
     AppointmentStatus,
+    RecurrenceFrequency,
+    WaitlistEntry,
+    WaitlistStatus,
 )
 from app.models.audit import AuditLog  # noqa: F401
 from app.models.billing import ClaimState, InsuranceClaim, Invoice, InvoiceItem, InvoiceStatus  # noqa: F401

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 
+import BranchSelect from "../components/selects/BranchSelect";
+import DrugSelect from "../components/selects/DrugSelect";
 import { useAuth } from "../hooks/useAuth";
 import {
   createOrUpdateItem,
@@ -42,16 +44,14 @@ const emptyReorderForm: ReorderFormState = { drugId: "", reorderThreshold: "" };
  * "FILES TO CREATE".
  *
  * Judgment calls (documented per FRONTEND-AGENT instructions):
- *  - `system_admin` branch UX: there is no "list branches" endpoint in
- *    scope, so a single plain-text branch ID input is shown (same pattern
- *    `PrescriptionPage.tsx` used for free-text drug-ID entry). Rather than
- *    a separate branch field per form, ONE shared "branch ID" input at the
- *    top of the page drives every write (reorder threshold, receive batch)
- *    and both alert panels below, on the premise that a system_admin
- *    visiting this page is administering one branch at a time. A
- *    `pharmacist` never sees this input at all -- their branch is implicit
- *    from `user.branchId`, and the service layer omits the `branch_id` wire
- *    key entirely for them.
+ *  - `system_admin` branch UX: a single `<BranchSelect>` at the top of the
+ *    page drives every write (reorder threshold, receive batch) and both
+ *    alert panels below, on the premise that a system_admin visiting this
+ *    page is administering one branch at a time. A `pharmacist` never sees
+ *    this input at all -- their branch is implicit from `user.branchId`,
+ *    and the service layer omits the `branch_id` wire key entirely for
+ *    them. `drugId` on both forms is a `<DrugSelect>` in place of the old
+ *    raw-UUID text box (frontend UUID-to-dropdown conversion follow-up).
  *  - Default alert view: a `pharmacist`'s low-stock/expiring panels
  *    auto-load on mount for their own branch. A `system_admin` sees an
  *    "enter a branch ID above to view" prompt instead of an automatic
@@ -204,20 +204,10 @@ export default function PharmacyInventoryPage(): JSX.Element {
       {isSystemAdmin && (
         <div className="patient-form">
           <label className="auth-label" htmlFor="pharmacy-branch-id">
-            Branch ID
+            Branch
           </label>
-          <input
-            id="pharmacy-branch-id"
-            className="auth-input"
-            type="text"
-            placeholder="00000000-0000-0000-0000-000000000000"
-            value={branchId}
-            onChange={(event) => setBranchId(event.target.value)}
-          />
-          <p className="field-hint">
-            There is no branch-lookup endpoint in scope -- enter the branch&apos;s UUID directly. This
-            applies to every form and alert panel below.
-          </p>
+          <BranchSelect id="pharmacy-branch-id" value={branchId} onChange={setBranchId} />
+          <p className="field-hint">Applies to every form and alert panel below.</p>
         </div>
       )}
 
@@ -234,15 +224,12 @@ export default function PharmacyInventoryPage(): JSX.Element {
           <p className="field-hint">{reorderSuccess}</p>
         )}
         <label className="auth-label" htmlFor="reorder-drug-id">
-          Drug ID (UUID)
+          Drug
         </label>
-        <input
+        <DrugSelect
           id="reorder-drug-id"
-          className="auth-input"
-          type="text"
           value={reorderForm.drugId}
-          onChange={(event) => setReorderForm((previous) => ({ ...previous, drugId: event.target.value }))}
-          required
+          onChange={(value) => setReorderForm((previous) => ({ ...previous, drugId: value }))}
         />
         <label className="auth-label" htmlFor="reorder-threshold">
           Reorder threshold
@@ -281,15 +268,12 @@ export default function PharmacyInventoryPage(): JSX.Element {
           </div>
         )}
         <label className="auth-label" htmlFor="batch-drug-id">
-          Drug ID (UUID)
+          Drug
         </label>
-        <input
+        <DrugSelect
           id="batch-drug-id"
-          className="auth-input"
-          type="text"
           value={batchForm.drugId}
-          onChange={(event) => setBatchForm((previous) => ({ ...previous, drugId: event.target.value }))}
-          required
+          onChange={(value) => setBatchForm((previous) => ({ ...previous, drugId: value }))}
         />
         <label className="auth-label" htmlFor="batch-number">
           Batch number

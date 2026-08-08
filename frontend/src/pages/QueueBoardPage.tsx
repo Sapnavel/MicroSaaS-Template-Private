@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import { Link } from "react-router-dom";
 
 import AppointmentSelect from "../components/selects/AppointmentSelect";
 import BranchSelect from "../components/selects/BranchSelect";
@@ -90,6 +91,16 @@ const TRANSITION_LABEL: Record<TokenStatus, string> = {
  *    "walk-in" form here would be a small addition if a future PRP asks for
  *    it explicitly; this page keeps the scope to the one form the primary
  *    workflow needs.
+ *  - **Emergency/priority** (HMS Project Completion Prompt gap): a checkbox
+ *    on the check-in form, sent as `isPriority` -- the backend OR-s it with
+ *    the appointment's own `is_emergency` flag, so this only ever needs to
+ *    be checked for a non-emergency-booked appointment whose patient now
+ *    needs to jump the line. Priority tokens are shown with a distinct
+ *    badge and always sort above non-priority tokens (the backend does the
+ *    actual sorting -- `GET /queue/board` returns `is_priority DESC,
+ *    checked_in_at ASC` -- this page just renders whatever order it gets,
+ *    same "trust the backend's order" discipline every other list page
+ *    here uses).
  *  - **WebSocket lifecycle**: `subscribeToQueueBoard` is opened in a
  *    `useEffect` keyed on `[branchId, departmentId]` (only once both are
  *    concretely known -- i.e. after a successful load) and its returned
@@ -105,6 +116,11 @@ export default function QueueBoardPage(): JSX.Element {
   const { user } = useAuth();
   const role = user?.role;
   const canManage = role === "front_desk" || role === "nurse" || role === "system_admin";
+  // Matches `/consultations/new`'s route gate (App.tsx) and
+  // `consultation_service.start_consultation`'s own role check -- only
+  // these two roles can ever start or continue a consultation, so only they
+  // get the link.
+  const canOpenConsultation = role === "doctor" || role === "system_admin";
 
   const [branchId, setBranchId] = useState<string>("");
   const [departmentIdInput, setDepartmentIdInput] = useState<string>("");
@@ -116,6 +132,7 @@ export default function QueueBoardPage(): JSX.Element {
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const [appointmentId, setAppointmentId] = useState<string>("");
+  const [checkInIsPriority, setCheckInIsPriority] = useState<boolean>(false);
   const [checkInError, setCheckInError] = useState<string | null>(null);
   const [isCheckingIn, setIsCheckingIn] = useState<boolean>(false);
 
@@ -170,8 +187,9 @@ export default function QueueBoardPage(): JSX.Element {
     setIsCheckingIn(true);
     setCheckInError(null);
     try {
-      const created = await checkInWithAppointment(appointmentId.trim());
+      const created = await checkInWithAppointment(appointmentId.trim(), checkInIsPriority);
       setAppointmentId("");
+      setCheckInIsPriority(false);
       // Only splice the new token into the currently-loaded board if it
       // actually belongs to the (branch, department) pair on screen -- a
       // check-in for a different department shouldn't silently appear here.
@@ -266,6 +284,15 @@ export default function QueueBoardPage(): JSX.Element {
               appointment) is available via `queueService.checkInWalkIn` but is not exposed in this
               page -- see the doc comment on `QueueBoardPage` for why.
             </p>
+            <label className="auth-label" htmlFor="queue-checkin-priority">
+              <input
+                id="queue-checkin-priority"
+                type="checkbox"
+                checked={checkInIsPriority}
+                onChange={(event) => setCheckInIsPriority(event.target.checked)}
+              />{" "}
+              Emergency / priority (jumps the queue)
+            </label>
             {checkInError !== null && (
               <p className="auth-error" role="alert">
                 {checkInError}
@@ -290,6 +317,7 @@ export default function QueueBoardPage(): JSX.Element {
               <th>Status</th>
               <th>Checked in</th>
               <th>Est. wait (min)</th>
+              {canOpenConsultation && <th>Consultation</th>}
               {canManage && <th>Actions</th>}
             </tr>
           </thead>
@@ -298,6 +326,17 @@ export default function QueueBoardPage(): JSX.Element {
               const rowError = rowErrors[token.id] ?? null;
               const isPending = pendingTokenId === token.id;
               const nextStatuses = LEGAL_TRANSITIONS[token.status];
+              // Opening a consultation only makes sense once the token has
+              // actually been called in -- `queue_service.update_status`
+              // advances the linked `Appointment` to `in_progress` at that
+              // exact transition (the precondition
+              // `consultation_service.start_consultation` checks), so
+              // "waiting"/"delayed"/"skipped" tokens would just 400.
+              // Walk-in tokens (`appointmentId === null`) have no
+              // appointment to attach a consultation to at all.
+              const canLinkConsultation =
+                token.appointmentId !== null &&
+                (token.status === "in_consultation" || token.status === "done");
 
               return (
                 <tr key={token.id}>
@@ -306,6 +345,7 @@ export default function QueueBoardPage(): JSX.Element {
                     <span className={STATUS_BADGE_CLASS[token.status]}>
                       {STATUS_LABEL[token.status]}
                     </span>
+                    {token.isPriority && <span className="badge badge-danger">Priority</span>}
                     {rowError !== null && (
                       <p className="auth-error" role="alert">
                         {rowError}
@@ -314,6 +354,20 @@ export default function QueueBoardPage(): JSX.Element {
                   </td>
                   <td>{new Date(token.checkedInAt).toLocaleString()}</td>
                   <td>{token.estimatedWaitMinutes ?? "--"}</td>
+                  {canOpenConsultation && (
+                    <td>
+                      {canLinkConsultation ? (
+                        <Link
+                          className="button-secondary"
+                          to={`/consultations/new?appointmentId=${token.appointmentId}`}
+                        >
+                          Open
+                        </Link>
+                      ) : (
+                        "--"
+                      )}
+                    </td>
+                  )}
                   {canManage && (
                     <td>
                       {nextStatuses.map((nextStatus) => (

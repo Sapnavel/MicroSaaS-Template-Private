@@ -13,18 +13,42 @@ mount, NOT by SQLAlchemy — so this file never calls
 `Base.metadata.create_all()`/`drop_all()`; it truncates the relevant tables
 between tests instead.
 
+DATABASE ISOLATION (HMS Project Completion Prompt gap): this default
+`DATABASE_URL` points at `hms_test`, a SEPARATE database from `hms` (the one
+`docker-compose.yml`'s backend service and every `.env`/`.env.example`
+default use for actual dev/demo use) on the same Postgres instance/
+container. This used to default to `hms` itself -- since every test
+truncates most tables before AND after running (see `TRUNCATE_TABLES`
+below), that meant running `pytest` against a local `docker compose up`
+stack silently wiped whatever seeded/demo data was in the dev database.
+`hms_test` is NOT created automatically by
+`docker-entrypoint-initdb.d` on a fresh volume (only `POSTGRES_DB` -- `hms`
+-- gets that treatment) -- see `database/init_test_db.sh` (mounted as a
+second init script in `docker-compose.yml`) for how a fresh clone gets it
+for free. On an EXISTING Postgres volume that predates this fix, create it
+once by hand:
+    docker compose exec postgres sh -c "psql -U hms -d postgres -c 'CREATE DATABASE hms_test;'"
+    docker compose exec postgres sh -c "psql -U hms -d hms_test -f /docker-entrypoint-initdb.d/01-schema.sql"
+
 Test isolation choices (documented per the task brief):
 - Postgres: `db` fixture truncates `refresh_tokens`, `users`, `branches`,
   `hospital_groups` (CASCADE) before every test, so each test starts from an
   empty table set rather than relying on unique emails alone.
-- Redis: fixture flushes the **same logical DB the app uses**
-  (`REDIS_URL=redis://localhost:6379/0`) before every test. A separate
-  logical DB (e.g. `/1`) was considered for isolation, but
-  `core/security.py` and `core/rate_limit.py` both build their Redis client
-  from `settings.redis_url` at import time, so pointing tests at a different
-  DB index than the app would require re-pointing those already-constructed
-  clients too. Flushing `/0` before each test is simpler and safe here
-  because nothing else uses this Postgres/Redis pair while tests run.
+- Redis: fixture flushes a SEPARATE logical DB from the one the live app
+  uses -- `REDIS_URL=redis://localhost:6379/1`, vs. the app's `/0` (same
+  Redis server/container, just a different index; Redis supports 16 by
+  default, `SELECT`-scoped). This used to default to the app's own `/0` --
+  since `redis_client`/`client` flush the whole DB before and after every
+  test, that meant running `pytest` against a local `docker compose up`
+  stack wiped the live app's rate-limit counters and revoked-token
+  blocklist. The old comment here claimed a separate index "would require
+  re-pointing already-constructed clients" -- that concern doesn't apply:
+  `core/security.py`/`core/rate_limit.py` build their Redis client from
+  `settings.redis_url` at MODULE IMPORT time, and this file's
+  `os.environ.setdefault("REDIS_URL", ...)` runs before `app.config`/
+  `app.main` (and therefore those two modules) are ever imported below --
+  so the override is already in place by the time either client is
+  constructed, same mechanism `DATABASE_URL`'s override above relies on.
 """
 
 import os
@@ -42,8 +66,8 @@ os.environ.setdefault("HMAC_KEY", "test-hmac-key-not-shared-with-jwt")
 os.environ.setdefault(
     "PHI_ENCRYPTION_KEY", "ZJqygQE1MBAqt8CWi7RygP4VAyWSWMt6iEQzB6XIhmQ="
 )
-os.environ.setdefault("DATABASE_URL", "postgresql+psycopg2://hms:hms@localhost:5432/hms")
-os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+os.environ.setdefault("DATABASE_URL", "postgresql+psycopg2://hms:hms@localhost:5432/hms_test")
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/1")
 os.environ.setdefault("LOGIN_RATE_LIMIT_PER_MINUTE", "3")
 
 # Settings is constructed at import time in app.config (`settings = get_settings()`)
@@ -169,7 +193,8 @@ def _seed_clinical_reference_data():
 # counts/constraint behavior that would leak across tests otherwise.
 TRUNCATE_TABLES = (
     "refresh_tokens, users, branches, hospital_groups, "
-    "patients, patient_duplicate_candidates, appointments, doctors, rooms, specialties, audit_logs, "
+    "patients, patient_duplicate_candidates, appointments, appointment_series, "
+    "appointment_waitlist_entries, doctors, rooms, specialties, audit_logs, "
     "consultations, diagnoses, patient_allergies, prescriptions, prescription_items, "
     "lab_orders, lab_samples, inventory_items, inventory_batches, "
     "wards, beds, admissions, ot_schedules, "

@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import ConsultationSelect from "../components/selects/ConsultationSelect";
+import PatientSearchSelect from "../components/selects/PatientSearchSelect";
 import { createLabOrder, getLabOrder } from "../services/labService";
 import type { CreateLabOrderData } from "../services/labService";
 import type { LabOrder } from "../types";
@@ -39,6 +41,12 @@ export default function LabOrderPage(): JSX.Element {
 
   const isCreateMode = !id;
 
+  // UI-only: not part of `CreateLabOrderData`'s wire payload (the backend
+  // derives patient_id from the chosen consultation) -- needed here purely
+  // to scope `<ConsultationSelect>`'s dependent fetch, same
+  // patient-then-consultation two-step `ConsultationPage.tsx`'s allergy
+  // section implies but this form makes explicit.
+  const [patientId, setPatientId] = useState<string>("");
   const [form, setForm] = useState<CreateLabOrderData>(emptyForm);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState<boolean>(false);
@@ -87,17 +95,29 @@ export default function LabOrderPage(): JSX.Element {
               {createError}
             </p>
           )}
-          <label className="auth-label" htmlFor="lab-order-consultation-id">
-            Consultation ID
+          <label className="auth-label" htmlFor="lab-order-patient">
+            Patient
           </label>
-          <input
+          <PatientSearchSelect
+            id="lab-order-patient"
+            value={patientId}
+            onChange={(value) => {
+              setPatientId(value);
+              // Changing the patient invalidates whatever consultation was
+              // previously picked (it belonged to the old patient) --
+              // ConsultationSelect would clear its own list, but the
+              // now-stale id must also be cleared out of the form.
+              setForm((previous) => ({ ...previous, consultationId: "" }));
+            }}
+          />
+          <label className="auth-label" htmlFor="lab-order-consultation-id">
+            Consultation
+          </label>
+          <ConsultationSelect
             id="lab-order-consultation-id"
-            className="auth-input"
-            type="text"
             value={form.consultationId}
-            onChange={(event) =>
-              setForm((previous) => ({ ...previous, consultationId: event.target.value }))
-            }
+            onChange={(value) => setForm((previous) => ({ ...previous, consultationId: value }))}
+            patientId={patientId}
             required
           />
           <label className="auth-label" htmlFor="lab-order-test-code">

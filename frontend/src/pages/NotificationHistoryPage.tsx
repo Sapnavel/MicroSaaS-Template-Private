@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 
+import BranchSelect from "../components/selects/BranchSelect";
+import PatientSearchSelect from "../components/selects/PatientSearchSelect";
+import StaffSelect from "../components/selects/StaffSelect";
 import { useAuth } from "../hooks/useAuth";
 import { listNotifications, retryNotification } from "../services/notificationService";
 import type { ListNotificationsParams } from "../services/notificationService";
@@ -37,11 +40,18 @@ const STATUS_LABEL: Record<NotificationStatus, string> = {
  *
  * Judgment calls (documented per FRONTEND-AGENT instructions):
  *  - `branchId` UX for `system_admin` mirrors `BedMatrixPage.tsx`/
- *    `InvoicePage.tsx`: a single free-text branch-ID input (no
- *    branch-lookup endpoint exists), required before the list can load.
- *    Non-`system_admin` callers never see this input -- their branch is
- *    implicit, so `branch_id` is simply never sent, and (same as
- *    `BedMatrixPage.tsx`) the list auto-loads on mount for them.
+ *    `InvoicePage.tsx`: a `<BranchSelect>` dropdown, required before the
+ *    list can load. Non-`system_admin` callers never see this input --
+ *    their branch is implicit, so `branch_id` is simply never sent, and
+ *    (same as `BedMatrixPage.tsx`) the list auto-loads on mount for them.
+ *  - **Patient/User ID filters**: `patientIdFilter` is a
+ *    `<PatientSearchSelect>` for every role (its backing endpoint has no
+ *    role gate beyond "any staff member"). `userIdFilter` is a
+ *    `<StaffSelect>` for `system_admin` only -- `GET /api/v1/staff` is
+ *    `system_admin`-only server-side (see `directory.py`), so a
+ *    non-`system_admin` caller can't use it as a lookup; they keep the
+ *    original free-text UUID input for this one field since they have no
+ *    accessible way to browse staff.
  *  - **Payload rendering**: `payload` is an arbitrary JSON object whose
  *    shape varies by which of the four event topics triggered the
  *    notification (per the PRP's "SCOPE-DEFINING FACT" -- no bespoke
@@ -132,43 +142,39 @@ export default function NotificationHistoryPage(): JSX.Element {
         {isSystemAdmin && (
           <>
             <label className="auth-label" htmlFor="notification-branch-id">
-              Branch ID
+              Branch
             </label>
-            <input
-              id="notification-branch-id"
-              className="auth-input"
-              type="text"
-              placeholder="00000000-0000-0000-0000-000000000000"
-              value={branchId}
-              onChange={(event) => setBranchId(event.target.value)}
-            />
-            <p className="field-hint">
-              There is no branch-lookup endpoint in scope -- enter the branch&apos;s UUID directly.
-            </p>
+            <BranchSelect id="notification-branch-id" value={branchId} onChange={setBranchId} />
           </>
         )}
         <label className="auth-label" htmlFor="notification-patient-id">
-          Patient ID (optional)
+          Patient (optional)
         </label>
-        <input
+        <PatientSearchSelect
           id="notification-patient-id"
-          className="auth-input"
-          type="text"
-          placeholder="00000000-0000-0000-0000-000000000000"
           value={patientIdFilter}
-          onChange={(event) => setPatientIdFilter(event.target.value)}
+          onChange={setPatientIdFilter}
         />
         <label className="auth-label" htmlFor="notification-user-id">
-          User ID (optional)
+          User (optional)
         </label>
-        <input
-          id="notification-user-id"
-          className="auth-input"
-          type="text"
-          placeholder="00000000-0000-0000-0000-000000000000"
-          value={userIdFilter}
-          onChange={(event) => setUserIdFilter(event.target.value)}
-        />
+        {isSystemAdmin ? (
+          <StaffSelect
+            id="notification-user-id"
+            value={userIdFilter}
+            onChange={setUserIdFilter}
+            branchId={branchId}
+          />
+        ) : (
+          <input
+            id="notification-user-id"
+            className="auth-input"
+            type="text"
+            placeholder="00000000-0000-0000-0000-000000000000"
+            value={userIdFilter}
+            onChange={(event) => setUserIdFilter(event.target.value)}
+          />
+        )}
         <label className="auth-label" htmlFor="notification-status">
           Status
         </label>

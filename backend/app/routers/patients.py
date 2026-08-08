@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.rate_limit import check_patient_search_rate_limit
-from app.core.security import require_role
+from app.core.security import authorize, require_role
 from app.database import get_db
 from app.models.user import User
 from app.schemas.patient import (
@@ -31,12 +31,27 @@ from app.schemas.patient import (
     PatientDemographics,
     PatientFullRecord,
 )
-from app.services import patient_service
+from app.services import patient_service, patient_timeline_service
+from app.services.patient_timeline_service import TimelineEvent
 
 router = APIRouter(prefix="/api/v1/patients", tags=["patients"])
 
 _READ_ROLES = ("front_desk", "nurse", "doctor", "system_admin")
 _REVIEW_ROLES = ("front_desk", "system_admin")
+# HMS Project Completion Prompt gap: `billing_admin` needs to look a patient
+# up to bill them (InvoicePage.tsx's patient picker calls `search`, and its
+# invoice-detail flow implicitly needs a patient to exist) but has no
+# business creating/merging/reviewing patient records -- narrower than
+# `_READ_ROLES`, applied only to the two lookup endpoints below.
+_SEARCH_ROLES = _READ_ROLES + ("billing_admin",)
+# HMS Project Completion Prompt gap ("Patient medical timeline"). Clinical
+# roles only -- deliberately narrower than `_READ_ROLES`/`_SEARCH_ROLES`
+# (excludes front_desk/billing_admin), matching those two roles' existing
+# narrower access everywhere else in this module (demographics-only shape,
+# no allergies/clinical fields) rather than inventing a second,
+# timeline-specific redaction scheme for them. See
+# services/patient_timeline_service.py's module docstring.
+_TIMELINE_ROLES = ("doctor", "nurse", "system_admin")
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=None)
@@ -76,7 +91,7 @@ def search_patients(
     dob: date | None = None,
     phone: str | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(*_READ_ROLES)),
+    current_user: User = Depends(require_role(*_SEARCH_ROLES)),
 ) -> list[PatientDemographics | PatientFullRecord]:
     """Search-before-create. At least one of `name`/`dob`/`phone` is
     required -- an unbounded scan of all patients is not an acceptable
@@ -111,10 +126,26 @@ def list_duplicates(
 def get_patient(
     patient_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(*_READ_ROLES)),
+    current_user: User = Depends(require_role(*_SEARCH_ROLES)),
 ) -> PatientDemographics | PatientFullRecord:
     patient = patient_service.get_patient(db, patient_id)
     return patient_service.shape_patient_response(current_user, patient)
+
+
+@router.get("/{patient_id}/timeline")
+def get_patient_timeline(
+    patient_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(*_TIMELINE_ROLES)),
+) -> list[TimelineEvent]:
+    """GET /api/v1/patients/{id}/timeline. HMS Project Completion Prompt
+    gap ("Patient medical timeline") -- see
+    services/patient_timeline_service.py's module docstring for the full
+    reasoning, including why this is gated narrower than the plain
+    `GET /{id}` above."""
+    patient = patient_service.get_patient(db, patient_id)
+    authorize(current_user, "patient", "read", patient)
+    return patient_timeline_service.get_patient_timeline(db, patient_id)
 
 
 @router.post("/duplicates/{candidate_id}/merge")

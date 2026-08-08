@@ -848,3 +848,196 @@ def test_list_claims_422_mismatched_branch(client, billing_admin_user, staff_pas
     resp = client.get("/api/v1/billing/claims", params={"branch_id": str(other_branch.id)}, headers=_auth(token))
 
     assert resp.status_code == 422, resp.text
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/billing/invoices/{id}/send-reminder -- HMS Project Completion
+# Prompt gap: "Payment reminders" had no trigger anywhere in the
+# notification pipeline before this.
+# ---------------------------------------------------------------------------
+
+
+def test_send_reminder_publishes_payment_reminder_event(
+    monkeypatch, client, billing_admin_user, staff_password, patient
+):
+    from app.services import billing_service
+
+    published: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        billing_service.event_publisher, "publish", lambda topic, payload: published.append((topic, payload))
+    )
+
+    token = _login(client, billing_admin_user.email, staff_password)
+    invoice = _create_invoice(client, token, patient.id, billing_admin_user.branch_id)
+
+    resp = client.post(f"/api/v1/billing/invoices/{invoice['id']}/send-reminder", headers=_auth(token))
+
+    assert resp.status_code == 200, resp.text
+    assert published == [
+        (
+            "billing.payment_reminder",
+            {
+                "invoice_id": invoice["id"],
+                "patient_id": str(patient.id),
+                "branch_id": str(billing_admin_user.branch_id),
+            },
+        )
+    ]
+
+
+def test_send_reminder_200_front_desk(client, billing_admin_user, front_desk_user, staff_password, patient):
+    """front_desk may trigger a reminder even though it can't mutate
+    billing state -- see routers/billing.py's docstring on this endpoint's
+    role gate."""
+    admin_token = _login(client, billing_admin_user.email, staff_password)
+    invoice = _create_invoice(client, admin_token, patient.id, billing_admin_user.branch_id)
+
+    front_desk_token = _login(client, front_desk_user.email, staff_password)
+    resp = client.post(
+        f"/api/v1/billing/invoices/{invoice['id']}/send-reminder", headers=_auth(front_desk_token)
+    )
+
+    assert resp.status_code == 200, resp.text
+
+
+def test_send_reminder_409_on_paid_invoice(client, billing_admin_user, staff_password, patient):
+    token = _login(client, billing_admin_user.email, staff_password)
+    invoice = _create_invoice(client, token, patient.id, billing_admin_user.branch_id)
+
+    mark_paid_resp = client.patch(f"/api/v1/billing/invoices/{invoice['id']}/mark-paid", headers=_auth(token))
+    assert mark_paid_resp.status_code == 200, mark_paid_resp.text
+
+    resp = client.post(f"/api/v1/billing/invoices/{invoice['id']}/send-reminder", headers=_auth(token))
+
+    assert resp.status_code == 409, resp.text
+
+
+def test_send_reminder_404_invoice_not_found(client, billing_admin_user, staff_password):
+    token = _login(client, billing_admin_user.email, staff_password)
+
+    resp = client.post(f"/api/v1/billing/invoices/{uuid.uuid4()}/send-reminder", headers=_auth(token))
+
+    assert resp.status_code == 404, resp.text
+
+
+# ---------------------------------------------------------------------------
+# PATCH /api/v1/billing/invoices/{id}/adjustments + GET .../receipt --
+# HMS Project Completion Prompt gaps ("tax and discount handling",
+# "receipt generation").
+# ---------------------------------------------------------------------------
+
+
+def test_apply_adjustments_200_sets_tax_and_discount_and_grand_total(
+    client, billing_admin_user, staff_password, patient, ended_consultation
+):
+    token = _login(client, billing_admin_user.email, staff_password)
+    invoice = _create_invoice(client, token, patient.id, billing_admin_user.branch_id)
+    client.post(
+        f"/api/v1/billing/invoices/{invoice['id']}/items",
+        json={
+            "source_type": "consultation",
+            "source_id": str(ended_consultation.id),
+            "description": "Consultation fee",
+            "amount": "100.00",
+        },
+        headers=_auth(token),
+    )
+
+    resp = client.patch(
+        f"/api/v1/billing/invoices/{invoice['id']}/adjustments",
+        json={"tax_rate_percent": "10.00", "discount_amount": "20.00"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert Decimal(body["tax_rate_percent"]) == Decimal("10.00")
+    assert Decimal(body["discount_amount"]) == Decimal("20.00")
+    assert Decimal(body["tax_amount"]) == Decimal("8.00")
+    assert Decimal(body["grand_total"]) == Decimal("88.00")
+
+
+def test_apply_adjustments_422_discount_exceeds_total(client, billing_admin_user, staff_password, patient):
+    token = _login(client, billing_admin_user.email, staff_password)
+    invoice = _create_invoice(client, token, patient.id, billing_admin_user.branch_id)
+
+    resp = client.patch(
+        f"/api/v1/billing/invoices/{invoice['id']}/adjustments",
+        json={"discount_amount": "0.01"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 422, resp.text
+
+
+def test_apply_adjustments_409_on_non_open_invoice(client, billing_admin_user, staff_password, patient):
+    token = _login(client, billing_admin_user.email, staff_password)
+    invoice = _create_invoice(client, token, patient.id, billing_admin_user.branch_id)
+    client.patch(f"/api/v1/billing/invoices/{invoice['id']}/void", headers=_auth(token))
+
+    resp = client.patch(
+        f"/api/v1/billing/invoices/{invoice['id']}/adjustments",
+        json={"tax_rate_percent": "5.00"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 409, resp.text
+
+
+def test_apply_adjustments_403_front_desk(client, billing_admin_user, front_desk_user, staff_password, patient):
+    admin_token = _login(client, billing_admin_user.email, staff_password)
+    invoice = _create_invoice(client, admin_token, patient.id, billing_admin_user.branch_id)
+
+    front_desk_token = _login(client, front_desk_user.email, staff_password)
+    resp = client.patch(
+        f"/api/v1/billing/invoices/{invoice['id']}/adjustments",
+        json={"discount_amount": "0"},
+        headers=_auth(front_desk_token),
+    )
+
+    assert resp.status_code == 403, resp.text
+
+
+def test_get_receipt_200_returns_pdf_billing_admin(client, billing_admin_user, staff_password, patient):
+    token = _login(client, billing_admin_user.email, staff_password)
+    invoice = _create_invoice(client, token, patient.id, billing_admin_user.branch_id)
+
+    resp = client.get(f"/api/v1/billing/invoices/{invoice['id']}/receipt", headers=_auth(token))
+
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"] == "application/pdf"
+    assert resp.content[:4] == b"%PDF"
+
+
+def test_get_receipt_200_front_desk_can_read(client, billing_admin_user, front_desk_user, staff_password, patient):
+    """`front_desk` is read-only on this router -- a receipt is a read, same
+    role gate as `get_invoice`."""
+    admin_token = _login(client, billing_admin_user.email, staff_password)
+    invoice = _create_invoice(client, admin_token, patient.id, billing_admin_user.branch_id)
+
+    front_desk_token = _login(client, front_desk_user.email, staff_password)
+    resp = client.get(f"/api/v1/billing/invoices/{invoice['id']}/receipt", headers=_auth(front_desk_token))
+
+    assert resp.status_code == 200, resp.text
+    assert resp.content[:4] == b"%PDF"
+
+
+def test_get_receipt_404_invoice_not_found(client, billing_admin_user, staff_password):
+    token = _login(client, billing_admin_user.email, staff_password)
+
+    resp = client.get(f"/api/v1/billing/invoices/{uuid.uuid4()}/receipt", headers=_auth(token))
+
+    assert resp.status_code == 404, resp.text
+
+
+def test_get_receipt_403_cross_branch(
+    client, billing_admin_user, system_admin_user, staff_password, patient, other_branch
+):
+    """Same tenant guard `get_invoice` enforces -- a receipt is a read."""
+    admin_token = _login(client, system_admin_user.email, staff_password)
+    invoice = _create_invoice(client, admin_token, patient.id, other_branch.id)
+
+    ba_token = _login(client, billing_admin_user.email, staff_password)
+    resp = client.get(f"/api/v1/billing/invoices/{invoice['id']}/receipt", headers=_auth(ba_token))
+
+    assert resp.status_code == 403, resp.text

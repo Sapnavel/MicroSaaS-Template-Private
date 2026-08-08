@@ -364,6 +364,13 @@ export interface Invoice {
   branchId: string;
   status: InvoiceStatus;
   totalAmount: number;
+  /** Percent, e.g. 8.5 -- null means no tax has been set. */
+  taxRatePercent: number | null;
+  discountAmount: number;
+  /** Computed server-side: tax on (totalAmount - discountAmount). */
+  taxAmount: number;
+  /** Computed server-side: totalAmount - discountAmount + taxAmount. */
+  grandTotal: number;
   createdAt: string;
 }
 
@@ -483,16 +490,18 @@ export interface DailyRevenue {
 }
 
 /** GET /dashboard/no-shows -- one row per branch. `noShowRate` is a plain
- * fraction (0.0-1.0). `noShowRiskScoreNote` is a fixed informational string
- * (see design decision #3) -- `Appointment.no_show_risk_score` is written
- * nowhere in this codebase, so this note explains that reality rather than
- * comparing actual outcomes against predictions that never exist; render it
- * as a small caption, don't drop it. */
+ * fraction (0.0-1.0) of ACTUAL outcomes. `avgPredictedNoShowRisk` is the
+ * mean `scheduling_engine.score_no_show_risk` heuristic score assigned at
+ * booking time for the same window's appointments -- `null` when every
+ * considered row's score is still unset (e.g. rows booked before this
+ * scoring existed). `noShowRiskScoreNote` explains the relationship between
+ * the two; render it as a small caption, don't drop it. */
 export interface NoShowRate {
   branchId: string;
   totalConsidered: number;
   noShowCount: number;
   noShowRate: number;
+  avgPredictedNoShowRisk: number | null;
   noShowRiskScoreNote: string;
 }
 
@@ -529,6 +538,7 @@ export interface QueueToken {
   calledAt: string | null;
   completedAt: string | null;
   estimatedWaitMinutes: number | null;
+  isPriority: boolean;
 }
 
 /**
@@ -624,4 +634,18 @@ export interface ConsultationListItem {
   appointmentId: string;
   createdAt: string;
   doctorName: string;
+}
+
+/** One entry in a patient's unified timeline -- GET /api/v1/me/timeline
+ * (patient) / GET /api/v1/patients/{id}/timeline (staff). `eventType` is a
+ * plain string tag (`"appointment"`, `"consultation"`, `"lab_order"`,
+ * `"prescription"`, `"admission"`, `"invoice"`), not a closed union --
+ * unrecognized values render generically rather than being a type error,
+ * matching the backend's own "additive tag, not a Literal" choice (see
+ * services/patient_timeline_service.py's `TimelineEvent` docstring). */
+export interface TimelineEvent {
+  eventType: string;
+  id: string;
+  occurredAt: string;
+  summary: string;
 }

@@ -44,6 +44,19 @@ class Settings(BaseSettings):
     # limit since normal registration workflow involves several searches.
     patient_search_rate_limit_per_minute: int = 30
 
+    # HMS Project Completion Prompt gap ("rate limiting where appropriate"):
+    # a broad, generous per-user (falls back to per-IP for unauthenticated
+    # requests) limit on every mutating request (POST/PUT/PATCH/DELETE)
+    # across the whole API (core/rate_limit.py's `check_write_rate_limit`,
+    # wired in main.py's `_write_rate_limit` middleware) -- defense in depth
+    # against bulk/scripted abuse of write-heavy endpoints (registration,
+    # merge, billing writes, etc.) that had no throttle at all before this.
+    # Deliberately much higher than the login/patient-search limits above,
+    # which stay in place as the tighter, endpoint-specific guards for their
+    # specific enumeration/brute-force risks -- this one is a coarse
+    # backstop, not meant to interfere with normal UI usage.
+    write_rate_limit_per_minute: int = 120
+
     google_client_id: str | None = None
     google_client_secret: str | None = None
 

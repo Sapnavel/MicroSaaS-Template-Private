@@ -260,6 +260,22 @@ export async function listConsultations(patientId: string): Promise<Consultation
   return data.map(toConsultationListItem);
 }
 
+/**
+ * `GET /api/v1/consultations?appointment_id=` -- `Consultation.appointment_id`
+ * is UNIQUE on the backend, so this resolves to 0 or 1 items. Backs the
+ * Queue Board -> Consultation click-path (`StartConsultationPage.tsx`):
+ * `null` means "not started yet for this appointment" (show a symptoms form
+ * that creates one), a hit means "already started" (skip straight to it).
+ */
+export async function getConsultationForAppointment(
+  appointmentId: string,
+): Promise<ConsultationListItem | null> {
+  const { data } = await api.get<ConsultationListItemWire[]>("/api/v1/consultations", {
+    params: { appointment_id: appointmentId },
+  });
+  return data.length > 0 ? toConsultationListItem(data[0]) : null;
+}
+
 export async function startConsultation(data: StartConsultationData): Promise<Consultation> {
   const body = {
     appointment_id: data.appointmentId,

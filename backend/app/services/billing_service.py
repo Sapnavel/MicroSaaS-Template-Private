@@ -42,6 +42,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.events import event_publisher
 from app.core.security import authorize, get_caller_branch_id
 from app.models.appointment import Appointment
 from app.models.billing import ClaimState, InsuranceClaim, Invoice, InvoiceItem
@@ -55,6 +56,7 @@ from app.schemas.billing import (
     ClaimListItemResponse,
     ClaimStateUpdate,
     InsuranceClaimResponse,
+    InvoiceAdjustmentsUpdate,
     InvoiceCreate,
     InvoiceDetailResponse,
     InvoiceItemCreate,
@@ -62,7 +64,7 @@ from app.schemas.billing import (
     InvoiceResponse,
     InvoiceSplitCreate,
 )
-from app.services import billing_engine
+from app.services import billing_engine, receipt_pdf
 
 
 @dataclass(frozen=True)
@@ -154,6 +156,39 @@ def get_invoice(db: Session, current_user: User, invoice_id: uuid.UUID) -> Invoi
         items=[InvoiceItemResponse.model_validate(item) for item in items],
         claim=InsuranceClaimResponse.model_validate(claim) if claim is not None else None,
     )
+
+
+def send_payment_reminder(db: Session, current_user: User, invoice_id: uuid.UUID) -> InvoiceResponse:
+    """POST /api/v1/billing/invoices/{id}/send-reminder. HMS Project
+    Completion Prompt gap: "Payment reminders" (notification module) had no
+    trigger anywhere -- `notifications` (this schema) has no scheduler/cron
+    infrastructure to fire one automatically off a due date (there is no
+    `due_date` column on `Invoice` either, see models/billing.py), so this
+    is staff-triggered, not automatic: a billing_admin/front_desk clerk
+    calls this explicitly for a specific still-owed invoice, same "manual
+    action, not a background job" constraint every other module in this
+    codebase that lacks scheduler infrastructure already documents (e.g.
+    lab_service.py's manual retry, notification-hub-prp.md's design
+    decision #2 on retry). Rejects `paid`/`void` invoices -- there is
+    nothing left to remind anyone about."""
+    invoice = _get_invoice_or_404(db, invoice_id)
+    authorize(current_user, "billing", "read", invoice)
+
+    if invoice.status in ("paid", "void"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"invoice is already {invoice.status}; no reminder is applicable",
+        )
+
+    event_publisher.publish(
+        "billing.payment_reminder",
+        {
+            "invoice_id": str(invoice.id),
+            "patient_id": str(invoice.patient_id),
+            "branch_id": str(invoice.branch_id),
+        },
+    )
+    return InvoiceResponse.model_validate(invoice)
 
 
 def list_patient_invoices(
@@ -386,6 +421,53 @@ def add_invoice_item(
         actor_user_id=current_user.id,
     )
     return InvoiceResponse.model_validate(updated)
+
+
+def apply_invoice_adjustments(
+    db: Session, current_user: User, invoice_id: uuid.UUID, payload: InvoiceAdjustmentsUpdate
+) -> InvoiceResponse:
+    """PATCH /api/v1/billing/invoices/{id}/adjustments. HMS Project
+    Completion Prompt gap ("tax and discount handling"). Authorizes against
+    the loaded `Invoice` BEFORE calling
+    `billing_engine.apply_invoice_adjustments`, same ordering every other
+    mutator on this router uses."""
+    invoice = _get_invoice_or_404(db, invoice_id)
+    authorize(current_user, "billing", "write", invoice)
+
+    updated = billing_engine.apply_invoice_adjustments(
+        db,
+        invoice_id=invoice_id,
+        tax_rate_percent=payload.tax_rate_percent,
+        discount_amount=payload.discount_amount,
+        actor_user_id=current_user.id,
+    )
+    return InvoiceResponse.model_validate(updated)
+
+
+def generate_receipt_pdf(db: Session, current_user: User, invoice_id: uuid.UUID) -> bytes:
+    """GET /api/v1/billing/invoices/{id}/receipt. HMS Project Completion
+    Prompt gap ("receipt generation"). Read-only -- same `authorize(...,
+    "read", ...)` gate as `get_invoice`, since a receipt is just a
+    formatted view of data the caller can already read. Delegates the
+    actual PDF layout to `services/receipt_pdf.py` (kept separate so this
+    module stays about authorization/orchestration, not document layout --
+    same "engine/service split" this codebase uses elsewhere, e.g.
+    `pharmacy_engine.py` vs `pharmacy_service.py`)."""
+    invoice = _get_invoice_or_404(db, invoice_id)
+    authorize(current_user, "billing", "read", invoice)
+
+    patient = db.get(Patient, invoice.patient_id)
+    items = db.execute(select(InvoiceItem).where(InvoiceItem.invoice_id == invoice_id)).scalars().all()
+    claim = db.execute(
+        select(InsuranceClaim).where(InsuranceClaim.invoice_id == invoice_id)
+    ).scalar_one_or_none()
+
+    return receipt_pdf.build_receipt_pdf(
+        invoice=invoice,
+        patient_name=patient.full_name if patient is not None else "Unknown patient",
+        items=items,
+        claim=claim,
+    )
 
 
 def split_invoice(

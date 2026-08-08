@@ -122,22 +122,31 @@ class NoShowRateResult:
     `no_show_count`. `no_show_rate` is `0.0` when
     `total_considered == 0` rather than raising `ZeroDivisionError`.
 
-    `no_show_risk_score_note`: per design decision #3, `Appointment.
-    no_show_risk_score` is written nowhere in this codebase (no scoring
-    service/heuristic/model exists to populate it) -- this endpoint reports
-    only the ACTUAL no-show rate, it does not and cannot compare against
-    that column's (always-NULL) predictions. This field surfaces that
-    reality plainly rather than silently omitting any mention of it."""
+    `avg_predicted_no_show_risk`: mean of `Appointment.no_show_risk_score`
+    over the same considered rows -- now populated (`scheduling_engine.
+    book_appointment` scores and persists every new booking; see that
+    module's `_no_show_patient_history`/`score_no_show_risk`). `None` when
+    every considered row's score is still NULL (e.g. rows booked before this
+    wiring existed, or a window with zero considered rows).
+
+    `no_show_risk_score_note`: explains the relationship between the two
+    numbers now that both are real -- `no_show_rate` is actual outcomes,
+    `avg_predicted_no_show_risk` is what the heuristic predicted at booking
+    time; they are not expected to match exactly (it's a simple weighted
+    heuristic, not a calibrated model, see `score_no_show_risk`'s own
+    docstring)."""
 
     branch_id: uuid.UUID
     total_considered: int
     no_show_count: int
     no_show_rate: float
+    avg_predicted_no_show_risk: float | None
     no_show_risk_score_note: str = (
-        "no_show_risk_score is NULL for every appointment in this deployment "
-        "(no scoring service/heuristic/model has ever been built to populate "
-        "it) -- this rate reflects only actual outcomes, not a comparison "
-        "against predictions."
+        "avg_predicted_no_show_risk is the mean score scheduling_engine."
+        "score_no_show_risk assigned at booking time for appointments in "
+        "this window; no_show_rate is what actually happened. They are "
+        "expected to diverge somewhat -- this is a simple weighted "
+        "heuristic, not a calibrated model."
     )
 
 
@@ -339,9 +348,10 @@ def get_no_show_rate(
     no_show_count = func.count(Appointment.id).filter(
         Appointment.status == AppointmentStatus.no_show
     )
+    avg_predicted_risk = func.avg(Appointment.no_show_risk_score)
 
     query = (
-        select(Appointment.branch_id, total_considered, no_show_count)
+        select(Appointment.branch_id, total_considered, no_show_count, avg_predicted_risk)
         .where(
             lower_bound >= window_start,
             lower_bound <= now,
@@ -354,7 +364,7 @@ def get_no_show_rate(
 
     rows = db.execute(query).all()
     results: list[NoShowRateResult] = []
-    for row_branch_id, considered, no_shows in rows:
+    for row_branch_id, considered, no_shows, avg_risk in rows:
         rate = (no_shows / considered) if considered > 0 else 0.0
         results.append(
             NoShowRateResult(
@@ -362,6 +372,7 @@ def get_no_show_rate(
                 total_considered=considered,
                 no_show_count=no_shows,
                 no_show_rate=rate,
+                avg_predicted_no_show_risk=float(avg_risk) if avg_risk is not None else None,
             )
         )
     return results

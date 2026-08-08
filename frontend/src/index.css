@@ -1,18 +1,50 @@
 :root {
-  color-scheme: light;
+  color-scheme: dark;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 
-  --color-primary: #4f46e5;
-  --color-primary-dark: #3f37c9;
-  --color-primary-soft: #eef0fd;
-  --color-surface: #ffffff;
-  --color-bg: #f4f5f9;
-  --color-border: #e3e5ec;
-  --color-text: #1a1c23;
-  --color-text-muted: #656b7a;
-  --shadow-sm: 0 1px 2px rgba(23, 26, 45, 0.06);
-  --shadow-md: 0 4px 14px rgba(23, 26, 45, 0.08);
-  --shadow-lg: 0 12px 28px rgba(23, 26, 45, 0.12);
+  /* Dark theme + lime accent, per user-provided reference design
+     (https://srv1794963.hstgr.cloud/login). Semantic status colors below
+     are new -- the previous light-theme palette hardcoded pastel
+     backgrounds (e.g. #fdecea) per use site instead of routing through
+     tokens, which would have looked broken (light pink/amber panels) on a
+     dark background. Every hardcoded hex color in this file has been
+     replaced with one of these tokens so the whole app re-themes from one
+     place instead of drifting page by page. */
+  --color-bg: #0a0a0b;
+  --color-surface: #131518;
+  --color-surface-hover: #1a1d21;
+  --color-border: #26292e;
+  --color-border-strong: #34383e;
+  --color-text: #f4f4f5;
+  --color-text-muted: #9a9ea6;
+  --color-text-faint: #6b7280;
+
+  --color-primary: #a3e635;
+  --color-primary-dark: #84cc16;
+  --color-primary-soft: rgba(163, 230, 53, 0.12);
+  --color-primary-contrast: #0a0a0b;
+
+  --color-danger: #f87171;
+  --color-danger-soft: rgba(248, 113, 113, 0.12);
+  --color-danger-border: rgba(248, 113, 113, 0.32);
+
+  --color-warning: #fbbf24;
+  --color-warning-soft: rgba(251, 191, 36, 0.12);
+  --color-warning-border: rgba(251, 191, 36, 0.32);
+
+  --color-success: #4ade80;
+  --color-success-soft: rgba(74, 222, 128, 0.12);
+  --color-success-border: rgba(74, 222, 128, 0.32);
+
+  --color-info: #60a5fa;
+  --color-info-soft: rgba(96, 165, 250, 0.12);
+
+  --gradient-accent: linear-gradient(90deg, #2dd4bf, #a855f7, #ec4899);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 32px rgba(0, 0, 0, 0.5);
+  --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
 }
@@ -49,8 +81,63 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
+/* Brand lockup -- the icon+name+subtitle group used both in the persistent
+   navbar and (bigger) at the top of every auth card, matching the
+   reference's repeated header pattern. `.brand-icon` is a plain CSS square
+   (no image asset) with a small gradient background, since no logo file
+   exists in this project -- swap the letter/emoji for a real SVG/PNG mark
+   later without changing any layout here. */
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.brand-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, #2dd4bf, #a855f7 55%, #ec4899);
+  color: #0a0a0b;
+  font-weight: 800;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+
+.brand-lockup--lg .brand-icon {
+  width: 3rem;
+  height: 3rem;
+  font-size: 1.4rem;
+  border-radius: var(--radius-md);
+}
+
+.brand-name {
+  font-weight: 800;
+  font-size: 1.05rem;
+  letter-spacing: 0.01em;
+  color: var(--color-text);
+  line-height: 1.2;
+}
+
+.brand-lockup--lg .brand-name {
+  font-size: 1.3rem;
+}
+
+.brand-subtitle {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+  line-height: 1.3;
+}
+
 /* Persistent top bar -- see components/layout/NavBar.tsx. Rendered by
-   ProtectedRoute around every authenticated page. */
+   ProtectedRoute around every authenticated page. The thin gradient line
+   under the bar mirrors the reference site's header treatment. */
 .navbar {
   display: flex;
   align-items: center;
@@ -59,17 +146,22 @@ textarea:focus-visible {
   padding: 0.85rem 1.75rem;
   background-color: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
-  box-shadow: var(--shadow-sm);
   position: sticky;
   top: 0;
   z-index: 10;
 }
 
+.navbar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 2px;
+  background: var(--gradient-accent);
+}
+
 .navbar-brand {
-  font-weight: 800;
-  font-size: 1.15rem;
-  letter-spacing: 0.02em;
-  color: var(--color-primary);
   text-decoration: none;
 }
 
@@ -146,6 +238,12 @@ textarea:focus-visible {
   line-height: 1.4;
 }
 
+/* Auth pages (login/register). Page background is a subtle dark radial
+   glow (not the flat black of the card) so the centered card reads as
+   raised, same effect the reference site gets from its card border +
+   flat black backdrop. `.auth-form` gets a `.brand-lockup--lg` header
+   (icon + name + subtitle) above the "Login"/"Register" heading, matching
+   the reference card's repeated branding. */
 .auth-page {
   min-height: 100vh;
   display: flex;
@@ -153,15 +251,12 @@ textarea:focus-visible {
   justify-content: center;
   padding: 1.5rem;
   box-sizing: border-box;
-}
-
-.auth-page {
-  background: radial-gradient(circle at top left, var(--color-primary-soft), var(--color-bg) 60%);
+  background: radial-gradient(circle at top left, rgba(168, 85, 247, 0.08), var(--color-bg) 55%);
 }
 
 .auth-form {
   width: 100%;
-  max-width: 360px;
+  max-width: 380px;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -172,9 +267,19 @@ textarea:focus-visible {
   box-shadow: var(--shadow-md);
 }
 
+.auth-form .brand-lockup {
+  margin-bottom: 1.5rem;
+}
+
 .auth-form h1 {
-  margin: 0 0 1rem 0;
+  margin: 0 0 0.35rem 0;
   font-size: 1.35rem;
+}
+
+.auth-form-subtitle {
+  margin: 0 0 1.25rem 0;
+  font-size: 0.88rem;
+  color: var(--color-text-muted);
 }
 
 .auth-label {
@@ -184,11 +289,17 @@ textarea:focus-visible {
 }
 
 .auth-input {
-  padding: 0.55rem 0.7rem;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
   font-size: 1rem;
+  background-color: var(--color-bg);
+  color: var(--color-text);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.auth-input::placeholder {
+  color: var(--color-text-faint);
 }
 
 .auth-input:focus-visible {
@@ -198,13 +309,13 @@ textarea:focus-visible {
 
 .auth-submit {
   margin-top: 1.25rem;
-  padding: 0.65rem 1rem;
+  padding: 0.7rem 1rem;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background-color: var(--color-primary);
-  color: #ffffff;
+  color: var(--color-primary-contrast);
   font-size: 1rem;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
   transition: background-color 0.15s ease, transform 0.05s ease;
 }
@@ -218,15 +329,16 @@ textarea:focus-visible {
 }
 
 .auth-submit:disabled {
-  background-color: #b7bdf0;
+  background-color: var(--color-border-strong);
+  color: var(--color-text-faint);
   cursor: not-allowed;
 }
 
 .auth-error {
-  background-color: #fdecea;
-  color: #b3261e;
-  border: 1px solid #f5c2c0;
-  border-radius: 4px;
+  background-color: var(--color-danger-soft);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-sm);
   padding: 0.5rem 0.75rem;
   font-size: 0.9rem;
 }
@@ -235,6 +347,7 @@ textarea:focus-visible {
   margin-top: 1rem;
   font-size: 0.85rem;
   text-align: center;
+  color: var(--color-text-muted);
 }
 
 .auth-loading {
@@ -309,7 +422,7 @@ textarea:focus-visible {
 
 .patient-card dt {
   font-weight: 600;
-  color: #555;
+  color: var(--color-text-muted);
 }
 
 .patient-card dd {
@@ -317,14 +430,14 @@ textarea:focus-visible {
 }
 
 .empty-state {
-  color: #666;
+  color: var(--color-text-muted);
   font-size: 0.95rem;
 }
 
 .conflict-banner {
-  background-color: #fff8e1;
-  border: 1px solid #f0d98c;
-  border-radius: 6px;
+  background-color: var(--color-warning-soft);
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--radius-sm);
   padding: 1rem 1.25rem;
   margin-bottom: 1.5rem;
 }
@@ -341,31 +454,32 @@ textarea:focus-visible {
 
 .button-secondary {
   padding: 0.5rem 0.9rem;
-  border: 1px solid var(--color-primary);
-  border-radius: 6px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
   background-color: var(--color-surface);
-  color: var(--color-primary);
+  color: var(--color-text);
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .button-secondary:hover:not(:disabled) {
-  background-color: var(--color-primary-soft);
+  background-color: var(--color-surface-hover);
+  border-color: var(--color-primary);
 }
 
 .button-secondary:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
 .button-danger {
   padding: 0.5rem 0.9rem;
-  border: 1px solid #b3261e;
-  border-radius: 6px;
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-sm);
   background-color: var(--color-surface);
-  color: #b3261e;
+  color: var(--color-danger);
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
@@ -373,11 +487,11 @@ textarea:focus-visible {
 }
 
 .button-danger:hover:not(:disabled) {
-  background-color: #fdecea;
+  background-color: var(--color-danger-soft);
 }
 
 .button-danger:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
@@ -407,7 +521,7 @@ textarea:focus-visible {
 
 .duplicate-meta {
   font-size: 0.85rem;
-  color: #555;
+  color: var(--color-text-muted);
   margin: 0 0 0.75rem 0;
 }
 
@@ -442,7 +556,7 @@ textarea:focus-visible {
 
 .field-hint {
   font-size: 0.8rem;
-  color: #666;
+  color: var(--color-text-muted);
   margin: 0.15rem 0 0 0;
 }
 
@@ -452,8 +566,8 @@ textarea:focus-visible {
   font-weight: 600;
   padding: 0.15rem 0.5rem;
   border-radius: 999px;
-  background-color: #eef1f6;
-  color: #444;
+  background-color: var(--color-surface-hover);
+  color: var(--color-text-muted);
   margin-left: 0.5rem;
 }
 
@@ -480,7 +594,7 @@ textarea:focus-visible {
 }
 
 .status-banner {
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 1rem 1.25rem;
   margin-bottom: 1.5rem;
 }
@@ -498,36 +612,36 @@ textarea:focus-visible {
    (solid red) than the soft override-required banner below, and never
    paired with an action button. */
 .status-banner--block {
-  background-color: #fdecea;
-  border: 1px solid #f5c2c0;
+  background-color: var(--color-danger-soft);
+  border: 1px solid var(--color-danger-border);
 }
 
 .status-banner--block h3 {
   margin: 0 0 0.5rem 0;
-  color: #b3261e;
+  color: var(--color-danger);
 }
 
 /* Soft block (OVERRIDE_REQUIRED tier): same visual language as
    .conflict-banner in the patient-registration duplicate flow, since this is
    the same "explicit second action required" pattern. */
 .status-banner--override {
-  background-color: #fff8e1;
-  border: 1px solid #f0d98c;
+  background-color: var(--color-warning-soft);
+  border: 1px solid var(--color-warning-border);
 }
 
 .status-banner--override h3 {
   margin: 0 0 0.5rem 0;
-  color: #8a6d00;
+  color: var(--color-warning);
 }
 
 .status-banner--success {
-  background-color: #eaf6ec;
-  border: 1px solid #bfe3c4;
+  background-color: var(--color-success-soft);
+  border: 1px solid var(--color-success-border);
 }
 
 .status-banner--success h3 {
   margin: 0 0 0.5rem 0;
-  color: #1e7a34;
+  color: var(--color-success);
 }
 
 .safety-finding-list {
@@ -543,20 +657,20 @@ textarea:focus-visible {
   border-radius: 4px;
   padding: 0.5rem 0.75rem;
   font-size: 0.9rem;
-  border-left: 4px solid #999;
-  background-color: #f5f6f8;
+  border-left: 4px solid var(--color-text-faint);
+  background-color: var(--color-surface-hover);
 }
 
 .safety-finding--block {
-  border-left-color: #b3261e;
+  border-left-color: var(--color-danger);
 }
 
 .safety-finding--override_required {
-  border-left-color: #d99a00;
+  border-left-color: var(--color-warning);
 }
 
 .safety-finding--info {
-  border-left-color: #2f6fed;
+  border-left-color: var(--color-info);
 }
 
 .prescription-item-row {
@@ -580,10 +694,12 @@ textarea:focus-visible {
 
 .textarea {
   padding: 0.5rem 0.6rem;
-  border: 1px solid #c9ccd1;
+  border: 1px solid var(--color-border-strong);
   border-radius: 4px;
   font-size: 1rem;
   font-family: inherit;
+  background-color: var(--color-bg);
+  color: var(--color-text);
   resize: vertical;
 }
 
@@ -627,12 +743,12 @@ textarea:focus-visible {
 }
 
 .data-table tbody tr:hover {
-  background-color: var(--color-primary-soft);
+  background-color: var(--color-surface-hover);
 }
 
 .data-table th {
-  background-color: #fafbfd;
-  color: #555;
+  background-color: var(--color-bg);
+  color: var(--color-text-muted);
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -650,18 +766,18 @@ textarea:focus-visible {
    `.ward-section` / `.bed-grid` / `.bed-card` for the bed matrix layout. */
 
 .badge-success {
-  background-color: #eaf6ec;
-  color: #1e7a34;
+  background-color: var(--color-success-soft);
+  color: var(--color-success);
 }
 
 .badge-warning {
-  background-color: #fff8e1;
-  color: #8a6d00;
+  background-color: var(--color-warning-soft);
+  color: var(--color-warning);
 }
 
 .badge-danger {
-  background-color: #fdecea;
-  color: #b3261e;
+  background-color: var(--color-danger-soft);
+  color: var(--color-danger);
 }
 
 .ward-section {
@@ -748,7 +864,7 @@ textarea:focus-visible {
 
 .select-search-result:hover,
 .select-search-result:focus-visible {
-  background-color: var(--color-primary-soft);
+  background-color: var(--color-surface-hover);
 }
 
 .select-search-value {
@@ -757,7 +873,7 @@ textarea:focus-visible {
   justify-content: space-between;
   gap: 0.5rem;
   padding: 0.55rem 0.7rem;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   border-radius: 6px;
   background-color: var(--color-surface);
   font-size: 0.9rem;

@@ -1,14 +1,19 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 
+import BranchSelect from "../components/selects/BranchSelect";
+import PatientSearchSelect from "../components/selects/PatientSearchSelect";
 import { useAuth } from "../hooks/useAuth";
 import {
   addInvoiceItem,
+  applyInvoiceAdjustments,
   createInvoice,
+  fetchInvoiceReceiptPdf,
   getInvoice,
   listChargeableEvents,
   listPatientInvoices,
   markInvoicePaid,
+  sendPaymentReminder,
   splitInvoice,
   voidInvoice,
 } from "../services/billingService";
@@ -69,7 +74,14 @@ interface SplitFormState {
 
 const emptySplitForm: SplitFormState = { payerName: "", claimAmount: "", patientCopay: "" };
 
-type RowAction = "addItem" | "split";
+interface AdjustmentsFormState {
+  taxRatePercent: string;
+  discountAmount: string;
+}
+
+const emptyAdjustmentsForm: AdjustmentsFormState = { taxRatePercent: "", discountAmount: "" };
+
+type RowAction = "addItem" | "split" | "adjustments";
 
 /**
  * Primary billing workflow page -- see PRPs/billing-module-prp.md
@@ -87,13 +99,15 @@ type RowAction = "addItem" | "split";
  *    split, mark paid, void).
  *
  * Judgment calls (documented per FRONTEND-AGENT instructions):
- *  - `branchId` UX for `system_admin` mirrors `BedMatrixPage.tsx`: a single
- *    free-text branch-ID input, shown only to `system_admin` (no
- *    branch-lookup endpoint exists). A non-`system_admin` caller's branch
- *    is their own `user.branchId` -- sent on every request (list endpoints
- *    require `branch_id` for non-`system_admin` callers per the PRP's
- *    ENDPOINTS table; `POST /invoices` always requires it in the body,
- *    regardless of role).
+ *  - `branchId` UX for `system_admin` mirrors `BedMatrixPage.tsx`: a
+ *    `<BranchSelect>`, shown only to `system_admin`. A non-`system_admin`
+ *    caller's branch is their own `user.branchId` -- sent on every request
+ *    (list endpoints require `branch_id` for non-`system_admin` callers per
+ *    the PRP's ENDPOINTS table; `POST /invoices` always requires it in the
+ *    body, regardless of role).
+ *  - **Patient lookup**: `<PatientSearchSelect>` in place of the old raw
+ *    patient-UUID text box (frontend UUID-to-dropdown conversion
+ *    follow-up).
  *  - **"Split" is only offered on `open` invoices**, not `open`/`split` as
  *    a literal reading of the action-button grouping might suggest --
  *    `split_invoice` 409s unless `invoice.status == "open"` (PRP
@@ -105,6 +119,16 @@ type RowAction = "addItem" | "split";
  *    (design decision #6), picking a loaded chargeable event only
  *    pre-fills `source_type`/`source_id`/`description` -- `amount` is
  *    always a required manual entry.
+ *  - **Tax/discount ("Adjustments")**: HMS Project Completion Prompt gap
+ *    fix. Same `open`-only gating as "Split"/"Add item" (backend 409s
+ *    otherwise). `taxAmount`/`grandTotal` are server-computed, never
+ *    entered directly -- the form only collects `taxRatePercent`/
+ *    `discountAmount`, and the row display always shows the authoritative
+ *    `grandTotal` the backend just returned.
+ *  - **Receipt download**: `<button>` per invoice, any status -- backend
+ *    labels the PDF "RECEIPT" once `paid`, "INVOICE" otherwise. Available
+ *    to `front_desk` too (a read, same role gate as "View details"), not
+ *    just `canManage`.
  */
 export default function InvoicePage(): JSX.Element {
   const { user } = useAuth();
@@ -131,6 +155,7 @@ export default function InvoicePage(): JSX.Element {
   const [openAction, setOpenAction] = useState<{ invoiceId: string; action: RowAction } | null>(null);
   const [addItemForm, setAddItemForm] = useState<AddItemFormState>(emptyAddItemForm);
   const [splitForm, setSplitForm] = useState<SplitFormState>(emptySplitForm);
+  const [adjustmentsForm, setAdjustmentsForm] = useState<AdjustmentsFormState>(emptyAdjustmentsForm);
 
   const [rowErrors, setRowErrors] = useState<Record<string, string | null>>({});
   const [pendingInvoiceId, setPendingInvoiceId] = useState<string | null>(null);
@@ -229,15 +254,21 @@ export default function InvoicePage(): JSX.Element {
     setOpenAction(null);
     setAddItemForm(emptyAddItemForm);
     setSplitForm(emptySplitForm);
+    setAdjustmentsForm(emptyAdjustmentsForm);
   };
 
-  const openRowAction = (invoiceId: string, action: RowAction): void => {
-    setRowErrors((previous) => ({ ...previous, [invoiceId]: null }));
-    setOpenAction({ invoiceId, action });
+  const openRowAction = (invoice: Invoice, action: RowAction): void => {
+    setRowErrors((previous) => ({ ...previous, [invoice.id]: null }));
+    setOpenAction({ invoiceId: invoice.id, action });
     if (action === "addItem") {
       setAddItemForm(emptyAddItemForm);
-    } else {
+    } else if (action === "split") {
       setSplitForm(emptySplitForm);
+    } else {
+      setAdjustmentsForm({
+        taxRatePercent: invoice.taxRatePercent !== null ? String(invoice.taxRatePercent) : "",
+        discountAmount: invoice.discountAmount > 0 ? String(invoice.discountAmount) : "",
+      });
     }
   };
 
@@ -337,6 +368,65 @@ export default function InvoicePage(): JSX.Element {
     }
   };
 
+  const handleAdjustmentsSubmit = async (invoice: Invoice, event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
+    const taxRatePercentTrimmed = adjustmentsForm.taxRatePercent.trim();
+    const taxRatePercent = taxRatePercentTrimmed === "" ? null : Number(taxRatePercentTrimmed);
+    const discountAmount = adjustmentsForm.discountAmount.trim() === "" ? 0 : Number(adjustmentsForm.discountAmount);
+    if (
+      (taxRatePercent !== null && (!Number.isFinite(taxRatePercent) || taxRatePercent < 0 || taxRatePercent > 100)) ||
+      !Number.isFinite(discountAmount) ||
+      discountAmount < 0
+    ) {
+      setRowErrors((previous) => ({
+        ...previous,
+        [invoice.id]: "Tax rate must be 0-100 (or blank), and discount must be zero or greater.",
+      }));
+      return;
+    }
+    setPendingInvoiceId(invoice.id);
+    try {
+      const updated = await applyInvoiceAdjustments(invoice.id, { taxRatePercent, discountAmount });
+      applyUpdatedInvoice(updated);
+      closeRowAction();
+      setExpandedInvoiceId(invoice.id);
+      await loadDetail(invoice.id);
+    } catch (error) {
+      setRowErrors((previous) => ({
+        ...previous,
+        [invoice.id]: extractErrorMessage(
+          error,
+          "Could not apply tax/discount -- confirm the discount does not exceed the invoice's subtotal.",
+        ),
+      }));
+    } finally {
+      setPendingInvoiceId(null);
+    }
+  };
+
+  const handleDownloadReceipt = async (invoice: Invoice): Promise<void> => {
+    setRowErrors((previous) => ({ ...previous, [invoice.id]: null }));
+    setPendingInvoiceId(invoice.id);
+    try {
+      const blob = await fetchInvoiceReceiptPdf(invoice.id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `invoice-${invoice.id}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setRowErrors((previous) => ({
+        ...previous,
+        [invoice.id]: extractErrorMessage(error, "Could not download this invoice's receipt."),
+      }));
+    } finally {
+      setPendingInvoiceId(null);
+    }
+  };
+
   const handleMarkPaid = async (invoice: Invoice): Promise<void> => {
     setRowErrors((previous) => ({ ...previous, [invoice.id]: null }));
     setPendingInvoiceId(invoice.id);
@@ -350,6 +440,24 @@ export default function InvoicePage(): JSX.Element {
       setRowErrors((previous) => ({
         ...previous,
         [invoice.id]: extractErrorMessage(error, "Could not mark this invoice as paid."),
+      }));
+    } finally {
+      setPendingInvoiceId(null);
+    }
+  };
+
+  const [reminderSentInvoiceId, setReminderSentInvoiceId] = useState<string | null>(null);
+
+  const handleSendReminder = async (invoice: Invoice): Promise<void> => {
+    setRowErrors((previous) => ({ ...previous, [invoice.id]: null }));
+    setPendingInvoiceId(invoice.id);
+    try {
+      await sendPaymentReminder(invoice.id);
+      setReminderSentInvoiceId(invoice.id);
+    } catch (error) {
+      setRowErrors((previous) => ({
+        ...previous,
+        [invoice.id]: extractErrorMessage(error, "Could not send a payment reminder for this invoice."),
       }));
     } finally {
       setPendingInvoiceId(null);
@@ -386,32 +494,15 @@ export default function InvoicePage(): JSX.Element {
         {isSystemAdmin && (
           <>
             <label className="auth-label" htmlFor="invoice-branch-id">
-              Branch ID
+              Branch
             </label>
-            <input
-              id="invoice-branch-id"
-              className="auth-input"
-              type="text"
-              placeholder="00000000-0000-0000-0000-000000000000"
-              value={branchId}
-              onChange={(event) => setBranchId(event.target.value)}
-            />
-            <p className="field-hint">
-              There is no branch-lookup endpoint in scope -- enter the branch&apos;s UUID directly.
-            </p>
+            <BranchSelect id="invoice-branch-id" value={branchId} onChange={setBranchId} />
           </>
         )}
         <label className="auth-label" htmlFor="invoice-patient-id">
-          Patient ID (UUID)
+          Patient
         </label>
-        <input
-          id="invoice-patient-id"
-          className="auth-input"
-          type="text"
-          placeholder="00000000-0000-0000-0000-000000000000"
-          value={patientId}
-          onChange={(event) => setPatientId(event.target.value)}
-        />
+        <PatientSearchSelect id="invoice-patient-id" value={patientId} onChange={setPatientId} />
         <div className="conflict-actions">
           <button className="button-secondary" type="button" disabled={isLoading || !canLoad} onClick={() => void load()}>
             {isLoading ? "Loading..." : "Load"}
@@ -466,8 +557,21 @@ export default function InvoicePage(): JSX.Element {
                   <span className={STATUS_BADGE_CLASS[invoice.status]}>{STATUS_LABEL[invoice.status]}</span>
                 </div>
                 <p>
-                  Total: <strong>{invoice.totalAmount.toFixed(2)}</strong> -- created{" "}
-                  {new Date(invoice.createdAt).toLocaleString()}
+                  Subtotal: <strong>{invoice.totalAmount.toFixed(2)}</strong>
+                  {invoice.discountAmount > 0 && <> -- discount: -{invoice.discountAmount.toFixed(2)}</>}
+                  {invoice.taxRatePercent !== null && (
+                    <>
+                      {" "}
+                      -- tax ({invoice.taxRatePercent}%): {invoice.taxAmount.toFixed(2)}
+                    </>
+                  )}
+                  {(invoice.discountAmount > 0 || invoice.taxRatePercent !== null) && (
+                    <>
+                      {" "}
+                      -- grand total: <strong>{invoice.grandTotal.toFixed(2)}</strong>
+                    </>
+                  )}
+                  {" "}-- created {new Date(invoice.createdAt).toLocaleString()}
                 </p>
 
                 {rowError !== null && (
@@ -485,7 +589,7 @@ export default function InvoicePage(): JSX.Element {
                       className="button-secondary"
                       type="button"
                       disabled={isPending}
-                      onClick={() => openRowAction(invoice.id, "addItem")}
+                      onClick={() => openRowAction(invoice, "addItem")}
                     >
                       Add item
                     </button>
@@ -495,9 +599,37 @@ export default function InvoicePage(): JSX.Element {
                       className="button-secondary"
                       type="button"
                       disabled={isPending}
-                      onClick={() => openRowAction(invoice.id, "split")}
+                      onClick={() => openRowAction(invoice, "split")}
                     >
                       Split
+                    </button>
+                  )}
+                  {canManage && invoice.status === "open" && !isOpenFor("adjustments") && (
+                    <button
+                      className="button-secondary"
+                      type="button"
+                      disabled={isPending}
+                      onClick={() => openRowAction(invoice, "adjustments")}
+                    >
+                      Tax / discount
+                    </button>
+                  )}
+                  <button
+                    className="button-secondary"
+                    type="button"
+                    disabled={isPending}
+                    onClick={() => void handleDownloadReceipt(invoice)}
+                  >
+                    {isPending ? "Working..." : "Download receipt"}
+                  </button>
+                  {(invoice.status === "open" || invoice.status === "split") && (
+                    <button
+                      className="button-secondary"
+                      type="button"
+                      disabled={isPending}
+                      onClick={() => void handleSendReminder(invoice)}
+                    >
+                      {reminderSentInvoiceId === invoice.id ? "Reminder sent" : "Send reminder"}
                     </button>
                   )}
                   {canManage && (invoice.status === "open" || invoice.status === "split") && (
@@ -687,6 +819,60 @@ export default function InvoicePage(): JSX.Element {
                     <div className="conflict-actions">
                       <button className="auth-submit" type="submit" disabled={isPending}>
                         {isPending ? "Splitting..." : "Confirm split"}
+                      </button>
+                      <button
+                        className="button-secondary"
+                        type="button"
+                        disabled={isPending}
+                        onClick={closeRowAction}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {isOpenFor("adjustments") && (
+                  <form
+                    className="override-reason-form"
+                    onSubmit={(event) => void handleAdjustmentsSubmit(invoice, event)}
+                  >
+                    <label className="auth-label" htmlFor={`adjustments-tax-${invoice.id}`}>
+                      Tax rate % (optional)
+                    </label>
+                    <input
+                      id={`adjustments-tax-${invoice.id}`}
+                      className="auth-input"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      value={adjustmentsForm.taxRatePercent}
+                      onChange={(event) =>
+                        setAdjustmentsForm((previous) => ({ ...previous, taxRatePercent: event.target.value }))
+                      }
+                    />
+                    <label className="auth-label" htmlFor={`adjustments-discount-${invoice.id}`}>
+                      Discount amount
+                    </label>
+                    <input
+                      id={`adjustments-discount-${invoice.id}`}
+                      className="auth-input"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={adjustmentsForm.discountAmount}
+                      onChange={(event) =>
+                        setAdjustmentsForm((previous) => ({ ...previous, discountAmount: event.target.value }))
+                      }
+                    />
+                    <p className="field-hint">
+                      Discount is applied before tax. Discount cannot exceed the subtotal (
+                      {invoice.totalAmount.toFixed(2)}).
+                    </p>
+                    <div className="conflict-actions">
+                      <button className="auth-submit" type="submit" disabled={isPending}>
+                        {isPending ? "Saving..." : "Save tax / discount"}
                       </button>
                       <button
                         className="button-secondary"

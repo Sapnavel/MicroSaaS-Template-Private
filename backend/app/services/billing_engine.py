@@ -1,6 +1,7 @@
 """Billing / Ledger / Insurance Claims engine (PRPs/billing-module-prp.md,
-"ENGINE DESIGN"). Six functions -- `create_invoice`, `add_invoice_item`,
-`split_invoice`, `set_claim_state`, `mark_invoice_paid`, `void_invoice` --
+"ENGINE DESIGN"). Seven functions -- `create_invoice`, `add_invoice_item`,
+`apply_invoice_adjustments`, `split_invoice`, `set_claim_state`,
+`mark_invoice_paid`, `void_invoice` --
 each a single `SELECT ... FOR UPDATE` + mutate + commit + audit-log inside
 one transaction, exactly the "commit + audit-log owned by the engine
 function itself" shape `services/ward_engine.py` uses (as opposed to Lab's
@@ -112,6 +113,12 @@ class DuplicateChargeError(Exception):
     billed on some invoice, possibly a different one than the one being
     charged now. This is the authoritative guard (PRP design decision #1),
     not merely an in-memory pre-check. Callers turn this into a 409."""
+
+
+class DiscountExceedsTotalError(Exception):
+    """Raised by `apply_invoice_adjustments` when the requested
+    `discount_amount` exceeds `invoice.total_amount` -- a discount can never
+    take a bill below zero. Callers turn this into a 422."""
 
 
 class ClaimAmountMismatchError(Exception):
@@ -301,6 +308,73 @@ def add_invoice_item(
         resource_type="invoice_item",
         resource_id=str(item.id),
         metadata={"source_type": source_type, "source_id": str(source_id), "amount": str(amount)},
+    )
+    db.commit()
+    db.refresh(invoice)
+    return invoice
+
+
+def apply_invoice_adjustments(
+    db: Session,
+    *,
+    invoice_id: uuid.UUID,
+    tax_rate_percent: Decimal | None,
+    discount_amount: Decimal,
+    actor_user_id: uuid.UUID,
+) -> Invoice:
+    """HMS Project Completion Prompt gap ("tax and discount handling").
+
+    Sets (overwrites, not accumulates -- same "recompute, never increment"
+    discipline `add_invoice_item` uses for `total_amount`) an open invoice's
+    `tax_rate_percent`/`discount_amount`. Deliberately open-only, same
+    reasoning as `add_invoice_item`: once `split`/`paid`/`void`, the bill is
+    someone's factual record, not a draft to keep editing.
+
+    `grand_total` itself is NEVER stored -- it is `total_amount -
+    discount_amount + tax`, always derived fresh at read time (see
+    `schemas/billing.py`'s `InvoiceResponse.grand_total` computed field),
+    the same "a derived value is recomputed, never cached as a column that
+    can drift" discipline this module's docstring already establishes for
+    `total_amount` itself.
+
+    Raises:
+        InvoiceNotFoundError: no such invoice (404).
+        InvalidInvoiceStateError: `invoice.status != "open"` (409).
+        DiscountExceedsTotalError: `discount_amount > invoice.total_amount`
+            (422).
+    """
+    invoice = db.execute(
+        select(Invoice)
+        .where(Invoice.id == invoice_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+    if invoice is None:
+        raise InvoiceNotFoundError(f"invoice {invoice_id} not found")
+    if invoice.status != InvoiceStatus.open.value:
+        raise InvalidInvoiceStateError(
+            f"invoice {invoice_id} is not open (status={invoice.status!r}); cannot adjust tax/discount"
+        )
+    if discount_amount > invoice.total_amount:
+        raise DiscountExceedsTotalError(
+            f"discount_amount ({discount_amount}) exceeds invoice.total_amount ({invoice.total_amount})"
+        )
+
+    invoice.tax_rate_percent = tax_rate_percent
+    invoice.discount_amount = discount_amount
+    db.add(invoice)
+
+    record_audit_event(
+        db,
+        branch_id=invoice.branch_id,
+        actor_user_id=actor_user_id,
+        action="billing.adjustments_applied",
+        resource_type="invoice",
+        resource_id=str(invoice.id),
+        metadata={
+            "tax_rate_percent": str(tax_rate_percent) if tax_rate_percent is not None else None,
+            "discount_amount": str(discount_amount),
+        },
     )
     db.commit()
     db.refresh(invoice)

@@ -315,6 +315,59 @@ def test_search_by_phone_uses_same_normalization_as_create(client, front_desk_us
     assert any(row["id"] == created_id for row in results), results
 
 
+def test_search_billing_admin_gets_demographics_shape(client, front_desk_user, billing_admin_user, staff_password):
+    """HMS Project Completion Prompt gap: `billing_admin` needs patient
+    search to use the Invoice page's patient picker
+    (`PatientSearchSelect.tsx`), narrower than the full clinical-role read
+    -- demographics-only, same shape as `front_desk`, not the full record
+    doctor/nurse get."""
+    front_desk_token = _login(client, front_desk_user.email, staff_password)
+    created = _create_patient(
+        client, front_desk_token, full_name="Billing Search Target", dob="1988-08-08", phone="555-321-9876"
+    )
+    assert created.status_code == 201, created.text
+    created_id = created.json()["id"]
+
+    billing_token = _login(client, billing_admin_user.email, staff_password)
+    resp = client.get(
+        "/api/v1/patients/search", params={"phone": "555-321-9876"}, headers=_auth(billing_token)
+    )
+    assert resp.status_code == 200, resp.text
+    results = resp.json()
+    matches = [row for row in results if row["id"] == created_id]
+    assert len(matches) == 1, results
+    for key in ("national_id", "address", "allergies_note"):
+        assert key not in matches[0], f"{key} must be ABSENT from billing_admin's response, got: {matches[0]}"
+
+
+def test_get_patient_billing_admin_gets_demographics_shape(
+    client, front_desk_user, billing_admin_user, staff_password
+):
+    front_desk_token = _login(client, front_desk_user.email, staff_password)
+    created = _create_patient(
+        client, front_desk_token, full_name="Billing Get Target", dob="1991-01-01", phone="555-654-3210"
+    )
+    assert created.status_code == 201, created.text
+    created_id = created.json()["id"]
+
+    billing_token = _login(client, billing_admin_user.email, staff_password)
+    resp = client.get(f"/api/v1/patients/{created_id}", headers=_auth(billing_token))
+
+    assert resp.status_code == 200, resp.text
+    assert "allergies_note" not in resp.json()
+
+
+def test_create_patient_billing_admin_403(client, billing_admin_user, staff_password):
+    """`billing_admin` can look patients up (see the two tests above) but
+    has no business creating them -- that stays front_desk/doctor/nurse/
+    system_admin only."""
+    token = _login(client, billing_admin_user.email, staff_password)
+
+    resp = _create_patient(client, token, full_name="Should Be Rejected", dob="1990-01-01", phone="555-000-1111")
+
+    assert resp.status_code == 403, resp.text
+
+
 # ---------------------------------------------------------------------------
 # Merge workflow
 # ---------------------------------------------------------------------------

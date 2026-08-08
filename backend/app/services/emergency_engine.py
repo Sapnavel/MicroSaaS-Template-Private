@@ -16,9 +16,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import cast, delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.types import DateTime
 
 from app.core.events import event_publisher
 from app.core.locking import LockAcquisitionError, lock_manager
@@ -63,7 +64,16 @@ def _on_shift_doctor_ids(db: Session, branch_id: UUID, specialty_id: int, at: da
             Doctor.branch_id == branch_id,
             Doctor.specialty_id == specialty_id,
             Doctor.is_active.is_(True),
-            DoctorShift.shift_range.op("@>")(at.isoformat()),
+            # `.op("@>")` between a TSTZRANGE column and a bare Python value
+            # binds the parameter with the *column's* type by default (no
+            # right-hand type to infer from), so an un-cast string is sent to
+            # Postgres as "please parse this as a range literal" and fails
+            # with "malformed range literal". Casting explicitly to
+            # timestamptz makes this the `anyrange @> anyelement` overload
+            # instead, which is what "is `at` inside this shift" actually
+            # means. This was previously untested and broken for any
+            # real value of `at`.
+            DoctorShift.shift_range.op("@>")(cast(at, DateTime(timezone=True))),
         )
     ).scalars().all()
     return list(rows)
@@ -216,6 +226,16 @@ def preempt_and_book(db: Session, request: EmergencyRequest) -> Appointment:
 
             victim.status = AppointmentStatus.preempted
             db.add(victim)
+            # Same fix as scheduling_engine.cancel_appointment: the victim's
+            # own AppointmentRoomLock/AppointmentEquipmentLock rows have no
+            # status column and aren't cleared by the status flip above. Left
+            # in place, the INSERT below (same room_id, an overlapping time
+            # range by construction -- this victim was selected specifically
+            # because its slot overlaps the emergency window) would collide
+            # with its own stale lock row on the EXCLUDE constraint and the
+            # preemption would always fail.
+            db.execute(delete(AppointmentRoomLock).where(AppointmentRoomLock.appointment_id == victim.id))
+            db.execute(delete(AppointmentEquipmentLock).where(AppointmentEquipmentLock.appointment_id == victim.id))
             db.flush()
 
             end_time = now + timedelta(minutes=request.duration_minutes)

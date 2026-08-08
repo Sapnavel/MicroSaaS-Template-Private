@@ -12,6 +12,40 @@ calls `get_provider(channel).send(...)`.
 `recipient` is resolved by the caller (`services/notification_engine.py`,
 from `Patient.phone`/`User.email`) before `send` is invoked — the provider
 itself has no DB access and doesn't know how to look up a patient or user.
+
+CONFIGURING A REAL PROVIDER (HMS Project Completion Prompt, section 3.10:
+"Use safe development adapters when external credentials are unavailable.
+Document how production providers can be configured."):
+
+1. Add the provider's client library to `requirements.txt` (e.g. `twilio`
+   for SMS, or plain `smtplib`/a transactional-email SDK for email; FCM's
+   `firebase-admin` for push).
+2. Add its credentials to `app/config.py`'s `Settings` as new fields (e.g.
+   `twilio_account_sid: str | None = None`, `twilio_auth_token: str | None
+   = None`, `twilio_from_number: str | None = None`), sourced from env vars
+   the same way `settings.rabbitmq_url`/`settings.redis_url` already are --
+   NEVER hardcode a credential in this file or anywhere else in the repo.
+3. Implement the `NotificationProvider` protocol (just one method: `send(
+   self, *, channel, recipient, template, payload) -> bool`) in a new class
+   here, e.g. `TwilioNotificationProvider` for `channel="sms"`. Render
+   `template`+`payload` into the actual message body inside `send` (this
+   module has no templating engine yet -- add one, or keep it a simple
+   f-string per template name, matching the project's current scale).
+4. Register real instances in `_PROVIDERS`, keyed by channel, gated on
+   whether credentials are configured -- e.g.:
+       _PROVIDERS: dict[str, NotificationProvider] = {
+           "sms": TwilioNotificationProvider(settings) if settings.twilio_account_sid else _shared_provider,
+           "email": SmtpNotificationProvider(settings) if settings.smtp_host else _shared_provider,
+           "push": _shared_provider,  # FCM, same pattern, when needed
+       }
+   This keeps every environment without real credentials (local dev, CI,
+   this evaluation deployment) automatically falling back to the safe
+   logging stub -- no code change needed to run without a Twilio account,
+   only to run WITH one.
+5. Nothing in `services/notification_engine.py` or its callers
+   (`scheduling_engine.py`, `emergency_engine.py`, `lab_service.py`,
+   `billing_service.py`) needs to change -- they only ever call
+   `get_provider(channel).send(...)`, per the module docstring above.
 """
 
 import logging

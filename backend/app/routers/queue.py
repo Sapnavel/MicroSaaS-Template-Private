@@ -60,6 +60,7 @@ async def check_in(
                 appointment_id=payload.appointment_id,
                 branch_id=payload.branch_id,
                 department_id=payload.department_id,
+                is_priority=payload.is_priority,
             ),
         )
     except AppointmentNotFoundError as exc:

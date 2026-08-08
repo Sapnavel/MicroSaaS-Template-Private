@@ -43,6 +43,14 @@ class QueueCheckInRequest(BaseModel):
     appointment_id: uuid.UUID | None = None
     branch_id: uuid.UUID | None = None
     department_id: int | None = None
+    # HMS Project Completion Prompt gap ("emergency queue priority").
+    # Explicit opt-in for a walk-in; for an appointment-linked check-in this
+    # is OR-ed with the appointment's own `is_emergency` flag in
+    # `services/queue_service.check_in` -- a caller never has to remember to
+    # set this for an appointment that was already flagged emergency at
+    # booking time, but can still mark a non-emergency-booked walk-in as
+    # priority (e.g. a patient's condition worsens after arrival).
+    is_priority: bool = False
 
     @model_validator(mode="after")
     def _validate_exactly_one_shape(self) -> "QueueCheckInRequest":
@@ -92,3 +100,4 @@ class QueueTokenResponse(BaseModel):
     called_at: datetime | None
     completed_at: datetime | None
     estimated_wait_minutes: int | None
+    is_priority: bool

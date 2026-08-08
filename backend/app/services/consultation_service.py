@@ -45,7 +45,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -68,7 +68,7 @@ from app.schemas.consultation import (
     PrescriptionItemResponse,
     PrescriptionResponse,
 )
-from app.services import prescription_safety
+from app.services import prescription_safety, scheduling_engine
 from app.services.prescription_safety import PrescriptionSafetyReport, SafetyFinding, SafetyTier
 
 logger = logging.getLogger(__name__)
@@ -220,20 +220,57 @@ def list_consultations_for_patient(
         .where(Consultation.patient_id == patient_id)
         .order_by(Consultation.started_at.desc())
     )
+    return _run_consultation_list_query(db, current_user, query)
 
+
+def list_consultations_for_appointment(
+    db: Session, current_user: User, appointment_id: uuid.UUID
+) -> list[ConsultationListItemResponse]:
+    """GET /api/v1/consultations?appointment_id= -- see routers/
+    consultations.py's docstring on why this exists alongside `?patient_id=`.
+    Same ownership filtering as `list_consultations_for_patient` (a doctor
+    only ever sees their own); `Consultation.appointment_id` is UNIQUE so
+    this returns at most one row."""
+    query = (
+        select(Consultation.id, Consultation.appointment_id, Consultation.started_at, User.full_name)
+        .join(Doctor, Doctor.id == Consultation.doctor_id)
+        .join(User, User.id == Doctor.user_id)
+        .where(Consultation.appointment_id == appointment_id)
+        .order_by(Consultation.started_at.desc())
+    )
+    return _run_consultation_list_query(db, current_user, query)
+
+
+def _run_consultation_list_query(db: Session, current_user: User, query: Select) -> list[ConsultationListItemResponse]:
     if current_user.role == UserRole.doctor:
         caller_doctor_id = getattr(current_user, "doctor_id", None)
         if caller_doctor_id is None:
             return []
         query = query.where(Consultation.doctor_id == caller_doctor_id)
-    # else: system_admin (the only other role require_role permits on this
-    # endpoint) -- no ownership filter, see docstring.
+    # else: system_admin (the only other role require_role permits on either
+    # list endpoint) -- no ownership filter, see docstring.
 
     rows = db.execute(query).all()
     return [
         ConsultationListItemResponse(id=row[0], appointment_id=row[1], created_at=row[2], doctor_name=row[3])
         for row in rows
     ]
+
+
+def _time_range_upper_as_datetime(value: object) -> datetime | None:
+    """Extract a `TSTZRANGE` upper bound (already-loaded psycopg2
+    `Range.upper`) as a `datetime` -- mirrors `ward_service.py`'s
+    `_range_bound_as_datetime` exactly (same driver behavior: usually a
+    `datetime` already, occasionally a string, per that function's
+    docstring), duplicated here rather than imported since it's a one-line,
+    module-local concern in both places, not a shared abstraction."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        return datetime.fromisoformat(value)
+    raise TypeError(f"unexpected range bound type: {type(value)!r}")
 
 
 def complete_consultation(
@@ -251,6 +288,25 @@ def complete_consultation(
     db.add(consultation)
     db.commit()
     db.refresh(consultation)
+
+    # Whole-system review finding: `scheduling_engine.
+    # recalculate_downstream_wait_times` existed with zero call sites --
+    # the consumer side of the queue-wait-time pipeline
+    # (workers/queue_wait_time_consumer.py) was real and would have worked,
+    # but nothing ever produced its input event. This is the producer:
+    # completing a consultation is exactly "the doctor is now free", so if
+    # they ran past this appointment's own scheduled end, every later
+    # booked appointment for this doctor today needs its estimate shifted.
+    # Runs after the commit above (best-effort event publish, not part of
+    # the consultation-completion transaction itself -- same "read-then-act
+    # post-commit" shape `patient_service.create_patient`'s duplicate scan
+    # already uses).
+    appointment = db.get(Appointment, consultation.appointment_id)
+    if appointment is not None:
+        scheduled_end = _time_range_upper_as_datetime(appointment.time_range.upper)
+        if scheduled_end is not None and consultation.ended_at > scheduled_end:
+            scheduling_engine.recalculate_downstream_wait_times(db, appointment.doctor_id, consultation.ended_at)
+
     return consultation
 
 

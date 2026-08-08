@@ -1031,3 +1031,115 @@ def test_add_invoice_item_uses_select_for_update():
 
     source = inspect.getsource(billing_engine.add_invoice_item)
     assert "with_for_update()" in source
+
+
+# ---------------------------------------------------------------------------
+# 8. apply_invoice_adjustments -- HMS Project Completion Prompt gap
+#    ("tax and discount handling").
+# ---------------------------------------------------------------------------
+
+
+def test_apply_invoice_adjustments_sets_tax_and_discount(
+    db, open_invoice, ended_consultation, staff_user
+):
+    billing_engine.add_invoice_item(
+        db,
+        invoice_id=open_invoice.id,
+        source_type="consultation",
+        source_id=ended_consultation.id,
+        description="Consultation fee",
+        amount=Decimal("100.00"),
+        actor_user_id=staff_user.id,
+    )
+
+    updated = billing_engine.apply_invoice_adjustments(
+        db,
+        invoice_id=open_invoice.id,
+        tax_rate_percent=Decimal("10.00"),
+        discount_amount=Decimal("20.00"),
+        actor_user_id=staff_user.id,
+    )
+    assert updated.tax_rate_percent == Decimal("10.00")
+    assert updated.discount_amount == Decimal("20.00")
+    # total_amount (the itemized subtotal) is untouched by adjustments --
+    # only tax_rate_percent/discount_amount change.
+    assert updated.total_amount == Decimal("100.00")
+
+
+def test_apply_invoice_adjustments_discount_exceeding_total_raises(db, open_invoice, staff_user):
+    """`open_invoice` has `total_amount == 0` (no items added) -- any
+    positive discount already exceeds it."""
+    with pytest.raises(billing_engine.DiscountExceedsTotalError):
+        billing_engine.apply_invoice_adjustments(
+            db,
+            invoice_id=open_invoice.id,
+            tax_rate_percent=None,
+            discount_amount=Decimal("0.01"),
+            actor_user_id=staff_user.id,
+        )
+
+
+def test_apply_invoice_adjustments_rejected_on_non_open_invoice(db, open_invoice, staff_user):
+    billing_engine.void_invoice(db, invoice_id=open_invoice.id, actor_user_id=staff_user.id)
+
+    with pytest.raises(InvalidInvoiceStateError):
+        billing_engine.apply_invoice_adjustments(
+            db,
+            invoice_id=open_invoice.id,
+            tax_rate_percent=Decimal("5.00"),
+            discount_amount=Decimal("0"),
+            actor_user_id=staff_user.id,
+        )
+
+
+def test_apply_invoice_adjustments_not_found(db, staff_user):
+    with pytest.raises(InvoiceNotFoundError):
+        billing_engine.apply_invoice_adjustments(
+            db,
+            invoice_id=uuid.uuid4(),
+            tax_rate_percent=None,
+            discount_amount=Decimal("0"),
+            actor_user_id=staff_user.id,
+        )
+
+
+def test_invoice_response_grand_total_computed_discount_then_tax(
+    db, open_invoice, ended_consultation, staff_user
+):
+    """`InvoiceResponse.grand_total` is `(total_amount - discount) +
+    tax_on_discounted_subtotal` -- discount applied before tax, matching
+    common real-world invoicing order. 100 - 20 = 80 discounted subtotal;
+    10% tax on 80 = 8.00; grand_total = 88.00."""
+    from app.schemas.billing import InvoiceResponse
+
+    billing_engine.add_invoice_item(
+        db,
+        invoice_id=open_invoice.id,
+        source_type="consultation",
+        source_id=ended_consultation.id,
+        description="Consultation fee",
+        amount=Decimal("100.00"),
+        actor_user_id=staff_user.id,
+    )
+    updated = billing_engine.apply_invoice_adjustments(
+        db,
+        invoice_id=open_invoice.id,
+        tax_rate_percent=Decimal("10.00"),
+        discount_amount=Decimal("20.00"),
+        actor_user_id=staff_user.id,
+    )
+    summary = InvoiceResponse.model_validate(updated)
+    assert summary.tax_amount == Decimal("8.00")
+    assert summary.grand_total == Decimal("88.00")
+
+
+def test_invoice_response_grand_total_defaults_to_total_amount_with_no_adjustments(open_invoice):
+    """An invoice that never calls `apply_invoice_adjustments` (every
+    pre-existing invoice, and any invoice whose adjustments are never set)
+    has `grand_total == total_amount` exactly -- this HMS Project Completion
+    Prompt addition must be a strict no-op by default."""
+    from app.schemas.billing import InvoiceResponse
+
+    summary = InvoiceResponse.model_validate(open_invoice)
+    assert summary.tax_amount == Decimal("0.00")
+    assert summary.grand_total == summary.total_amount

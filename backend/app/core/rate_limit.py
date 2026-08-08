@@ -59,6 +59,15 @@ def check_login_ip_rate_limit(client_ip: str) -> None:
     )
 
 
+def check_write_rate_limit(key: str) -> None:
+    """HMS Project Completion Prompt gap ("rate limiting where
+    appropriate"). Coarse, generous per-caller limit applied to every
+    mutating HTTP request by `main.py`'s `_write_rate_limit` middleware --
+    see that middleware's docstring for why this exists alongside, not
+    instead of, the tighter endpoint-specific limits below."""
+    check_rate_limit(key, max_attempts=settings.write_rate_limit_per_minute, window_seconds=60)
+
+
 def check_patient_search_rate_limit(user_id: str) -> None:
     """Rate-limits GET /api/v1/patients/search per authenticated user.
 

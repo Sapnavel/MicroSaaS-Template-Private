@@ -58,6 +58,7 @@ def _make_token(
     token_number=1,
     checked_in_at=None,
     estimated_wait_minutes=None,
+    is_priority=False,
 ) -> QueueToken:
     token = QueueToken(
         branch_id=branch_id,
@@ -66,6 +67,7 @@ def _make_token(
         status=status,
         token_number=token_number,
         estimated_wait_minutes=estimated_wait_minutes,
+        is_priority=is_priority,
     )
     if checked_in_at is not None:
         token.checked_in_at = checked_in_at
@@ -142,6 +144,63 @@ def test_check_in_appointment_linked_derives_branch_and_department(
     assert token.department_id == doctor_record.specialty_id
     assert token.status == TokenStatus.waiting
     assert token.token_number == 1
+
+
+def test_check_in_walk_in_priority_flag_honored(db, branch, specialty, front_desk_user):
+    """HMS Project Completion Prompt gap ("emergency queue priority")."""
+    token = _run(
+        queue_service.check_in(
+            db,
+            front_desk_user,
+            QueueCheckInPayload(branch_id=branch.id, department_id=specialty.id, is_priority=True),
+        )
+    )
+    assert token.is_priority is True
+
+
+def test_check_in_walk_in_defaults_to_not_priority(db, branch, specialty, front_desk_user):
+    token = _run(
+        queue_service.check_in(
+            db, front_desk_user, QueueCheckInPayload(branch_id=branch.id, department_id=specialty.id)
+        )
+    )
+    assert token.is_priority is False
+
+
+def test_check_in_appointment_linked_inherits_emergency_flag(
+    db, in_progress_appointment, front_desk_user
+):
+    """A caller doesn't have to remember to re-flag priority for an
+    appointment already booked as an emergency (`is_emergency=True` set by
+    `emergency_engine.py` at booking time) -- `check_in` inherits it."""
+    in_progress_appointment.is_emergency = True
+    db.add(in_progress_appointment)
+    db.commit()
+
+    token = _run(
+        queue_service.check_in(
+            db, front_desk_user, QueueCheckInPayload(appointment_id=in_progress_appointment.id)
+        )
+    )
+    assert token.is_priority is True
+
+
+def test_check_in_appointment_linked_explicit_override_adds_priority(
+    db, in_progress_appointment, front_desk_user
+):
+    """A non-emergency-booked appointment can still be marked priority
+    explicitly at check-in (e.g. the patient's condition worsened after
+    arrival) -- OR-ed, never overridden away."""
+    assert in_progress_appointment.is_emergency is False
+
+    token = _run(
+        queue_service.check_in(
+            db,
+            front_desk_user,
+            QueueCheckInPayload(appointment_id=in_progress_appointment.id, is_priority=True),
+        )
+    )
+    assert token.is_priority is True
 
 
 def test_check_in_nonexistent_appointment_raises(db, front_desk_user):
@@ -302,6 +361,46 @@ def test_list_queue_filters_by_department_id_and_orders_by_checked_in_at(
 
     dept_tokens = queue_service.list_queue(db, system_admin_user, branch.id, specialty.id)
     assert [t.id for t in dept_tokens] == [earliest.id, latest.id]
+
+
+def test_list_queue_priority_tokens_sort_first_but_fairly_among_themselves(
+    db, system_admin_user, branch, specialty
+):
+    """HMS Project Completion Prompt gap ("emergency queue priority"):
+    `is_priority DESC, checked_in_at ASC` -- BOTH priority tokens sort ahead
+    of BOTH non-priority tokens regardless of arrival time, but the two
+    priority tokens (and separately the two non-priority tokens) keep their
+    own fair earliest-arrived-first order relative to each other."""
+    now = datetime.now(timezone.utc)
+    non_priority_early = _make_token(
+        db, branch_id=branch.id, department_id=specialty.id, checked_in_at=now - timedelta(minutes=60)
+    )
+    priority_late = _make_token(
+        db,
+        branch_id=branch.id,
+        department_id=specialty.id,
+        checked_in_at=now - timedelta(minutes=10),
+        is_priority=True,
+    )
+    priority_early = _make_token(
+        db,
+        branch_id=branch.id,
+        department_id=specialty.id,
+        checked_in_at=now - timedelta(minutes=30),
+        is_priority=True,
+    )
+    non_priority_late = _make_token(
+        db, branch_id=branch.id, department_id=specialty.id, checked_in_at=now - timedelta(minutes=5)
+    )
+
+    tokens = queue_service.list_queue(db, system_admin_user, branch.id, specialty.id)
+
+    assert [t.id for t in tokens] == [
+        priority_early.id,
+        priority_late.id,
+        non_priority_early.id,
+        non_priority_late.id,
+    ]
 
 
 # ---------------------------------------------------------------------------
