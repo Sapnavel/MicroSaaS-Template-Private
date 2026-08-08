@@ -102,9 +102,10 @@ services:
         condition: service_healthy
 
   frontend:
-    build: ./frontend
-    environment:
-      VITE_API_URL: http://localhost:8000
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: http://localhost:8000
     ports:
       - "3000:80"
     depends_on:

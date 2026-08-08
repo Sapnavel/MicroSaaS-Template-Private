@@ -3,6 +3,11 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install
 COPY . .
+# Vite inlines import.meta.env.* into the built JS at `npm run build` time --
+# a docker-compose `environment:` entry on the final nginx container has no
+# effect on an already-built static bundle. Must come in as a build ARG.
+ARG VITE_API_URL=http://localhost:8000
+ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build
 
 FROM nginx:alpine

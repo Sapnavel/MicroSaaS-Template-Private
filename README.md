@@ -200,15 +200,32 @@ relationship notes, generated from and kept in sync with
 
 ## Deployment
 
-This repo ships a working `docker-compose.yml` for local/single-host
-deployment (`docker compose up -d --build`) — that's the extent of the
-deployment tooling actually built and tested here. There is no CI/CD
-pipeline, Kubernetes manifests, or managed-cloud deployment config in this
-repository; standing up a production environment (managed Postgres/Redis/
-RabbitMQ, secrets management, TLS termination, horizontal scaling of the
-backend behind a load balancer, a real object-storage-backed static host for
-the frontend build) is genuine infrastructure work beyond this repo's
-current scope, not a documented-but-hidden feature.
+`docker-compose.yml` alone is for local/single-host dev (`docker compose up
+-d --build`). `docker-compose.prod.yml` is a tested override for a shared
+VPS that already runs [Traefik](https://traefik.io/) as its reverse proxy
+(the pattern used for this app's own deployment):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+It binds Postgres/Redis/RabbitMQ to `127.0.0.1` only (never exposed
+publicly), and routes the frontend/backend through the host's existing
+Traefik via Docker-provider labels instead of publishing their ports
+directly — Traefik terminates TLS (Let's Encrypt) for
+`HMS_FRONTEND_DOMAIN`/`HMS_API_DOMAIN` (set in `.env`, see
+`.env.example`). Requires: `POSTGRES_PASSWORD`, `FRONTEND_ORIGIN` (the
+`https://` frontend origin, for CORS), `HMS_FRONTEND_DOMAIN`,
+`HMS_API_DOMAIN`, and a Traefik instance already running on that host with a
+`letsencrypt` ACME cert resolver configured (this repo doesn't provision
+Traefik itself, only the labels an existing one needs to pick the app up).
+
+There is no CI/CD pipeline, Kubernetes manifests, or managed-cloud
+deployment config in this repository; a fully managed production setup
+(managed Postgres/Redis/RabbitMQ, secrets management, horizontal scaling of
+the backend behind a load balancer, a real object-storage-backed static host
+for the frontend build) is genuine infrastructure work beyond what's built
+here.
 
 ## Known limitations
 

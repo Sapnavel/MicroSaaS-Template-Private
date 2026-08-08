@@ -10,22 +10,27 @@
 # other containers via the compose network, and from the host itself via
 # `docker compose exec`/`psql -h 127.0.0.1`, just not from outside).
 #
-# Frontend and backend stay on their base-file ports (:3000 and :8000) --
-# this override does NOT claim host port 80/443. On a VPS that's already
-# running another reverse proxy (e.g. Traefik) bound to 80/443 for other
-# sites, claiming those ports here would either fail to bind or steal
-# traffic from those other apps. Reachable at `http://<host>:3000` until a
-# domain + reverse-proxy integration is set up -- see README.md's
-# "Deployment" section for the full picture.
+# Frontend and backend are NOT published directly to the host here (see the
+# `ports: !override []` on each below) -- instead they're routed through the
+# host's existing Traefik instance via Docker-provider labels, the same way
+# this host's other apps (n8n, Docuquery) are set up. Traefik terminates TLS
+# (Let's Encrypt, `letsencrypt` resolver already configured on that Traefik
+# instance) and reaches these containers directly over the Docker network by
+# container IP:port -- no host port publication needed or wanted once
+# Traefik is fronting them. Set `HMS_FRONTEND_DOMAIN`/`HMS_API_DOMAIN` in
+# `.env` to the two hostnames Traefik should route (e.g.
+# `hms.<host>.hstgr.cloud` / `hms-api.<host>.hstgr.cloud` for Hostinger's
+# free wildcard subdomain, or your own domain once its A/AAAA record points
+# at this VPS).
 #
 # Also overrides Postgres's password (dev default `hms` -> a real generated
 # one, required via `POSTGRES_PASSWORD` -- set it in `.env` alongside the
 # usual JWT/HMAC/PHI keys) and `FRONTEND_ORIGIN` (CORS is `allow_origins`-
 # scoped to exactly this value -- must be the real public URL the frontend
-# is served from, not `localhost`, or every browser request gets a CORS
-# error). RabbitMQ keeps its `guest`/`guest` default -- acceptable ONLY
-# because this file also binds it to localhost, never exposed publicly;
-# change it too if that ever stops being true.
+# is served from, e.g. `https://hms.<host>.hstgr.cloud`, or every browser
+# request gets a CORS error). RabbitMQ keeps its `guest`/`guest` default --
+# acceptable ONLY because this file also binds it to localhost, never
+# exposed publicly; change it too if that ever stops being true.
 services:
   postgres:
     environment:
@@ -50,7 +55,14 @@ services:
   backend:
     environment:
       DATABASE_URL: postgresql+psycopg2://hms:${POSTGRES_PASSWORD:?set a strong Postgres password, see .env.example}@postgres:5432/hms
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?set the public origin the frontend is served from, e.g. http://<vps-ip>:3000}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?set the public https origin the frontend is served from, e.g. https://hms.<host>.hstgr.cloud}
+    ports: !override []
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.hms-backend.entrypoints=websecure"
+      - "traefik.http.routers.hms-backend.rule=Host(`${HMS_API_DOMAIN:?set the API hostname Traefik should route, see .env.example}`)"
+      - "traefik.http.routers.hms-backend.tls.certresolver=letsencrypt"
+      - "traefik.http.services.hms-backend.loadbalancer.server.port=8000"
 
   notification_worker:
     environment:
@@ -59,3 +71,15 @@ services:
   queue_wait_time_worker:
     environment:
       DATABASE_URL: postgresql+psycopg2://hms:${POSTGRES_PASSWORD:?set a strong Postgres password, see .env.example}@postgres:5432/hms
+
+  frontend:
+    build:
+      args:
+        VITE_API_URL: https://${HMS_API_DOMAIN:?set the API hostname Traefik should route, see .env.example}
+    ports: !override []
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.hms-frontend.entrypoints=websecure"
+      - "traefik.http.routers.hms-frontend.rule=Host(`${HMS_FRONTEND_DOMAIN:?set the frontend hostname Traefik should route, see .env.example}`)"
+      - "traefik.http.routers.hms-frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.services.hms-frontend.loadbalancer.server.port=80"
